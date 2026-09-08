@@ -7,10 +7,13 @@ generated/checked by `scripts/gen_padring.py`, which asserts the subsystem port
 list from the RTL and the pad geometry from the PDK LEF before emitting
 anything.
 
-**Status: chip top and flow config GENERATED and lint-clean; NOT yet
-hardened.** The RTL2GDS run is the user's call and has not been made. This
-document carries no hardening (DRC/LVS/timing) results because none exist yet;
-a missing status is not a pass.
+**Status: chip top and flow config GENERATED and lint-clean; hardening
+DEFERRED.** The RTL2GDS run of this full-chip build is a deliberate
+deferral — P&R sits below implementation, verification and documentation
+for this IP, and the subsystem it wraps is already signed off to GDS
+(V52). This document carries no hardening (DRC/LVS/timing) results because
+the run has not been made; a missing status is not a pass. To harden,
+follow the invocation below.
 
 This chip is the flash-boot build: `cdriscv_subsys` is instantiated with
 `BootEnable=1` (its default is `0` — the signed-off, TCM-preloaded
