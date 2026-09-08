@@ -28,7 +28,8 @@
     "dir::../rtl/periph/cdriscv_timer.sv",
     "dir::../rtl/periph/cdriscv_irq_ctrl.sv",
     "dir::../rtl/periph/cdriscv_ams_if.sv",
-    "dir::../rtl/cdriscv_subsys.sv",
+    "dir::../rtl/boot/cdriscv_qspi_boot.sv",
+  "dir::../rtl/cdriscv_subsys.sv",
     "dir::cdriscv_subsys_hard.sv"
   ],
   "CLOCK_PORT": "clk_i",

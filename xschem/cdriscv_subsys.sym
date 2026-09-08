@@ -1,0 +1,126 @@
+v {xschem version=3.4.5 file_version=1.2}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+V {}
+S {}
+E {}
+G {}
+L 4 0 0 360 0 {}
+L 4 360 0 360 480 {}
+L 4 360 480 0 480 {}
+L 4 0 480 0 0 {}
+L 4 -20 20 0 20 {}
+L 4 -20 40 0 40 {}
+L 4 -20 60 0 60 {}
+L 4 -20 80 0 80 {}
+L 4 -20 100 0 100 {}
+L 4 -20 120 0 120 {}
+L 4 -20 140 0 140 {}
+L 4 360 20 380 20 {}
+L 4 360 40 380 40 {}
+L 4 360 60 380 60 {}
+L 4 360 80 380 80 {}
+L 4 360 100 380 100 {}
+L 4 -20 160 0 160 {}
+L 4 -20 180 0 180 {}
+L 4 360 120 380 120 {}
+L 4 360 140 380 140 {}
+L 4 360 160 380 160 {}
+L 4 360 180 380 180 {}
+L 4 -20 200 0 200 {}
+L 4 360 200 380 200 {}
+L 4 360 220 380 220 {}
+L 4 360 240 380 240 {}
+L 4 360 260 380 260 {}
+L 4 360 280 380 280 {}
+L 4 360 300 380 300 {}
+L 4 -20 220 0 220 {}
+L 4 -20 240 0 240 {}
+L 4 -20 260 0 260 {}
+L 4 360 320 380 320 {}
+L 4 360 340 380 340 {}
+L 4 360 360 380 360 {}
+L 4 360 380 380 380 {}
+L 4 360 400 380 400 {}
+L 4 360 420 380 420 {}
+L 4 -20 280 0 280 {}
+L 4 360 440 380 440 {}
+L 4 360 460 380 460 {}
+B 5 -22.5 17.5 -17.5 22.5 {name=clk_i dir=in}
+B 5 -22.5 37.5 -17.5 42.5 {name=rst_ni dir=in}
+B 5 -22.5 57.5 -17.5 62.5 {name=ref_clk_i dir=in}
+B 5 -22.5 77.5 -17.5 82.5 {name=ref_rst_ni dir=in}
+B 5 -22.5 97.5 -17.5 102.5 {name=boot_addr_i[31:0] dir=in}
+B 5 -22.5 117.5 -17.5 122.5 {name=fetch_enable_i dir=in}
+B 5 -22.5 137.5 -17.5 142.5 {name=irq_i[13:0] dir=in}
+B 5 377.5 17.5 382.5 22.5 {name=err_pin_o dir=out}
+B 5 377.5 37.5 382.5 42.5 {name=reset_req_o dir=out}
+B 5 377.5 57.5 382.5 62.5 {name=fault_any_o dir=out}
+B 5 377.5 77.5 382.5 82.5 {name=adc_start_o dir=out}
+B 5 377.5 97.5 382.5 102.5 {name=adc_ch_o[2:0] dir=out}
+B 5 -22.5 157.5 -17.5 162.5 {name=adc_valid_i dir=in}
+B 5 -22.5 177.5 -17.5 182.5 {name=adc_data_i[11:0] dir=in}
+B 5 377.5 117.5 382.5 122.5 {name=dac_data_o[11:0] dir=out}
+B 5 377.5 137.5 382.5 142.5 {name=dac_we_o dir=out}
+B 5 377.5 157.5 382.5 162.5 {name=atest_en_o dir=out}
+B 5 377.5 177.5 382.5 182.5 {name=atest_sel_o[3:0] dir=out}
+B 5 -22.5 197.5 -17.5 202.5 {name=ana_flag_i[3:0] dir=in}
+B 5 377.5 197.5 382.5 202.5 {name=ext_psel_o dir=out}
+B 5 377.5 217.5 382.5 222.5 {name=ext_penable_o dir=out}
+B 5 377.5 237.5 382.5 242.5 {name=ext_paddr_o[11:0] dir=out}
+B 5 377.5 257.5 382.5 262.5 {name=ext_pwrite_o dir=out}
+B 5 377.5 277.5 382.5 282.5 {name=ext_pwdata_o[31:0] dir=out}
+B 5 377.5 297.5 382.5 302.5 {name=ext_pstrb_o[3:0] dir=out}
+B 5 -22.5 217.5 -17.5 222.5 {name=ext_prdata_i[31:0] dir=in}
+B 5 -22.5 237.5 -17.5 242.5 {name=ext_pready_i dir=in}
+B 5 -22.5 257.5 -17.5 262.5 {name=ext_pslverr_i dir=in}
+B 5 377.5 317.5 382.5 322.5 {name=core_sleep_o dir=out}
+B 5 377.5 337.5 382.5 342.5 {name=retire_valid_o dir=out}
+B 5 377.5 357.5 382.5 362.5 {name=retire_pc_o[31:0] dir=out}
+B 5 377.5 377.5 382.5 382.5 {name=retire_instr_o[31:0] dir=out}
+B 5 377.5 397.5 382.5 402.5 {name=qspi_sclk_o dir=out}
+B 5 377.5 417.5 382.5 422.5 {name=qspi_cs_no dir=out}
+B 5 -22.5 277.5 -17.5 282.5 {name=qspi_io_i[3:0] dir=in}
+B 5 377.5 437.5 382.5 442.5 {name=qspi_io_o[3:0] dir=out}
+B 5 377.5 457.5 382.5 462.5 {name=qspi_io_oe_o[3:0] dir=out}
+T {clk_i} 5 16 0 0 0.2 0.2 {}
+T {rst_ni} 5 36 0 0 0.2 0.2 {}
+T {ref_clk_i} 5 56 0 0 0.2 0.2 {}
+T {ref_rst_ni} 5 76 0 0 0.2 0.2 {}
+T {boot_addr_i[31:0]} 5 96 0 0 0.2 0.2 {}
+T {fetch_enable_i} 5 116 0 0 0.2 0.2 {}
+T {irq_i[13:0]} 5 136 0 0 0.2 0.2 {}
+T {err_pin_o} 355 16 0 1 0.2 0.2 {}
+T {reset_req_o} 355 36 0 1 0.2 0.2 {}
+T {fault_any_o} 355 56 0 1 0.2 0.2 {}
+T {adc_start_o} 355 76 0 1 0.2 0.2 {}
+T {adc_ch_o[2:0]} 355 96 0 1 0.2 0.2 {}
+T {adc_valid_i} 5 156 0 0 0.2 0.2 {}
+T {adc_data_i[11:0]} 5 176 0 0 0.2 0.2 {}
+T {dac_data_o[11:0]} 355 116 0 1 0.2 0.2 {}
+T {dac_we_o} 355 136 0 1 0.2 0.2 {}
+T {atest_en_o} 355 156 0 1 0.2 0.2 {}
+T {atest_sel_o[3:0]} 355 176 0 1 0.2 0.2 {}
+T {ana_flag_i[3:0]} 5 196 0 0 0.2 0.2 {}
+T {ext_psel_o} 355 196 0 1 0.2 0.2 {}
+T {ext_penable_o} 355 216 0 1 0.2 0.2 {}
+T {ext_paddr_o[11:0]} 355 236 0 1 0.2 0.2 {}
+T {ext_pwrite_o} 355 256 0 1 0.2 0.2 {}
+T {ext_pwdata_o[31:0]} 355 276 0 1 0.2 0.2 {}
+T {ext_pstrb_o[3:0]} 355 296 0 1 0.2 0.2 {}
+T {ext_prdata_i[31:0]} 5 216 0 0 0.2 0.2 {}
+T {ext_pready_i} 5 236 0 0 0.2 0.2 {}
+T {ext_pslverr_i} 5 256 0 0 0.2 0.2 {}
+T {core_sleep_o} 355 316 0 1 0.2 0.2 {}
+T {retire_valid_o} 355 336 0 1 0.2 0.2 {}
+T {retire_pc_o[31:0]} 355 356 0 1 0.2 0.2 {}
+T {retire_instr_o[31:0]} 355 376 0 1 0.2 0.2 {}
+T {qspi_sclk_o} 355 396 0 1 0.2 0.2 {}
+T {qspi_cs_no} 355 416 0 1 0.2 0.2 {}
+T {qspi_io_i[3:0]} 5 276 0 0 0.2 0.2 {}
+T {qspi_io_o[3:0]} 355 436 0 1 0.2 0.2 {}
+T {qspi_io_oe_o[3:0]} 355 456 0 1 0.2 0.2 {}
+T {cdriscv_subsys} 70.0 -18 0 0 0.3 0.3 {}
+T {@name} 150.0 486 0 0 0.25 0.25 {}

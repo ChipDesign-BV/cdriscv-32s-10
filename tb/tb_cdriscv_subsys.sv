@@ -78,6 +78,12 @@ module tb_cdriscv_subsys;
   logic        core_sleep, retire_valid;
   logic [31:0] retire_pc, retire_instr;
 
+  // QSPI boot pads: BootEnable is 0 (the default) in this bench, so
+  // the outputs are constants and the input is tied off.  The QSPI
+  // boot path has its own bench, tb/tb_cdriscv_boot.sv.
+  logic        qspi_sclk, qspi_cs_n;
+  logic [3:0]  qspi_io_o, qspi_io_oe;
+
   // A gate level netlist is one *configuration*, not a parameterisable
   // module -- synthesis has already resolved the parameters -- so the
   // overrides have to go away for that build.  They are the RTL
@@ -126,7 +132,12 @@ module tb_cdriscv_subsys;
       .core_sleep_o   (core_sleep),
       .retire_valid_o (retire_valid),
       .retire_pc_o    (retire_pc),
-      .retire_instr_o (retire_instr)
+      .retire_instr_o (retire_instr),
+      .qspi_sclk_o    (qspi_sclk),
+      .qspi_cs_no     (qspi_cs_n),
+      .qspi_io_i      (4'b0000),
+      .qspi_io_o      (qspi_io_o),
+      .qspi_io_oe_o   (qspi_io_oe)
   );
 
   // ------------------------------------------------------------------

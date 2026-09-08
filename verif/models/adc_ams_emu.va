@@ -1,0 +1,383 @@
+// -----------------------------------------------------------------------------
+// adc_ams_emu.va
+//
+// Verilog-A behavioural emulator of the ADC that sits opposite the
+// cdriscv-32s-10 AMS interface (rtl/periph/cdriscv_ams_if.sv,
+// register slot 4).  At chip level (rtl/chip) the same signals appear on
+// pads; the model connects identically on either side of the pad ring.
+//
+// Signal directions below are from the point of view of THIS model (the ADC),
+// so they are the mirror of the subsystem's top-level port list:
+//
+//   subsystem                       this model
+//   ---------------------------------------------------------------
+//   adc_start_o   ------------->    start
+//   adc_ch_o[2:0] ------------->    ch[2:0]
+//   adc_valid_i   <-------------    valid
+//   adc_data_i[11:0] <---------     data[11:0]
+//   dac_data_o[11:0] --------->     dac_data[11:0]
+//   dac_we_o      ------------->    dac_we
+//   atest_en_o    ------------->    atest_en
+//   atest_sel_o[3:0] --------->     atest_sel[3:0]
+//   ana_flag_i[3:0] <----------     ana_flag[3:0]
+//
+// INTERFACE CONTRACT, verified against the RTL (2026-09-06):
+//
+//   * adc_start_o is asserted for exactly one clk_i cycle per conversion
+//     (AS_START state, gated by ch_selected -- a start only appears for
+//     channels enabled in CHMASK).
+//   * adc_valid_i and adc_data_i are sampled RAW by the interface FSM --
+//     there is NO synchroniser on them (only ana_flag_i gets the 2-flop
+//     treatment).  The interface therefore treats them as synchronous to
+//     clk_i.  This behavioural model generates valid from an analog timer
+//     with no phase relation to clk_i, which is adequate for functional
+//     co-simulation (tvalid >= 1.5 clk guarantees a sampling edge, and
+//     data is held long after), but a real ADC on these pins must either
+//     retime valid/data to clk_i or the integrator must add
+//     synchronisation.  This is an integration requirement, not a model
+//     defect -- see doc/integration.md.
+//   * data must be settled tsu before valid rises and is then HELD until
+//     the next conversion; the capturing clock edge therefore always sees
+//     stable data.
+//
+// The model is deliberately *behavioural, not architectural*: it does not
+// model a SAR loop or a comparator. It reproduces the things the digital side
+// can observe and that the safety mechanisms are supposed to catch -- aperture
+// instant, conversion latency, code accuracy, over-range, timeout, stuck data,
+// wrong channel, supervisor flags -- so that AMS interface registers CHMASK /
+// PERIOD / LIMITn / TIMEOUT / FLAGCFG and safety fault bit 10 (FLT_AMS,
+// verified against cdriscv_32s_20_pkg.sv) can be exercised against something
+// that behaves like silicon.
+//
+// SIMULATOR CLASS: this model uses event-driven Verilog-AMS constructs
+// (@(timer), @(cross), transition(), $rdist_normal, $abstime) and requires a
+// full Verilog-A/AMS behavioural simulator.  It does NOT compile under
+// OpenVAF/OSDI (compact-model subset), so it is not runnable under this
+// tree's ngspice/VACASK flows -- see the note in doc/integration.md and the
+// openvaf verdict recorded there.
+//
+// (c) 2026 ChipDesign B.V. -- Apache-2.0
+// -----------------------------------------------------------------------------
+
+`include "disciplines.vams"
+`include "constants.vams"
+
+// one output bit of the data bus
+`define DBIT(n) \
+  V(data[n]) <+ transition( ((bus_out >> n) & 1) ? vsup : 0.0, tdo, trise, tfall)
+
+module adc_ams_emu (start, ch, valid, data,
+                    dac_we, dac_data, dac_out,
+                    atest_en, atest_sel, atest,
+                    ana_flag, vin, vmon, vrefp, vrefn, vss);
+
+  // ---- digital control inputs --------------------------------------------
+  input        start;        electrical       start;
+  input  [2:0] ch;           electrical [2:0] ch;
+  input        dac_we;       electrical       dac_we;
+  input [11:0] dac_data;     electrical [11:0] dac_data;
+  input        atest_en;     electrical       atest_en;
+  input  [3:0] atest_sel;    electrical [3:0] atest_sel;
+
+  // ---- digital outputs ----------------------------------------------------
+  output        valid;       electrical        valid;
+  output [11:0] data;        electrical [11:0] data;
+  output  [3:0] ana_flag;    electrical  [3:0] ana_flag;
+
+  // ---- analog -------------------------------------------------------------
+  input  [7:0] vin;          electrical [7:0] vin;   // eight channel inputs
+  input        vmon;         electrical       vmon;  // supervisor comparator in
+  input        vrefp;        electrical       vrefp;
+  input        vrefn;        electrical       vrefn;
+  input        vss;          electrical       vss;
+  inout        dac_out;      electrical       dac_out;
+  inout        atest;        electrical       atest;
+
+  // =========================================================================
+  // Parameters
+  // =========================================================================
+
+  // -- logic levels ---------------------------------------------------------
+  parameter real vsup      = 1.2   from (0:inf);  // digital supply of the model
+  parameter real vth_frac  = 0.5   from (0:1);    // input threshold, fraction
+  parameter real trise     = 200p  from (0:inf);
+  parameter real tfall     = 200p  from (0:inf);
+  parameter real tdo       = 0.0   from [0:inf);  // extra output delay
+
+  // -- conversion timing ----------------------------------------------------
+  parameter real tconv     = 2u    from (0:inf);  // start -> data valid
+  parameter real tsu       = 4n    from [0:inf);  // data settled before valid
+  parameter real tvalid    = 60n   from (0:inf);  // valid pulse width
+                                                  // >= 1 clk (40 ns at 25 MHz);
+                                                  // 1.5 clk guarantees capture
+                                                  // (valid is sampled raw --
+                                                  // see contract note above)
+  parameter real tjit      = 0.0   from [0:inf);  // aperture jitter, 1 sigma
+
+  // -- transfer function ----------------------------------------------------
+  parameter integer nbits  = 12    from [4:12];   // effective resolution
+  parameter integer msb_align = 0  from [0:1];    // 1: left-align nbits in [11:0]
+  parameter real voff_lsb  = 0.0;                 // offset error, LSB
+  parameter real gerr      = 0.0;                 // gain error, fractional
+  parameter real inl_lsb   = 0.0   from [0:inf);  // INL bow amplitude, LSB
+  parameter real dnl_lsb   = 0.0   from [0:inf);  // per-code DNL amplitude, LSB
+  parameter real vnoise    = 0.0   from [0:inf);  // input-referred noise, Vrms
+  parameter integer seed_p = 1;
+
+  // -- trim DAC -------------------------------------------------------------
+  parameter integer dac_nbits = 12 from [4:12];
+  parameter real dac_vfs   = 1.2   from (0:inf);  // full-scale output span
+  parameter real dac_vmin  = 0.0;                 // output at code 0
+  parameter integer dac_init = 0   from [0:4095]; // code after reset
+  parameter real rout_dac  = 1k    from (0:inf);
+  parameter real cout_dac  = 1p    from (0:inf);  // tau = rout_dac * cout_dac
+
+  // -- analog test bus ------------------------------------------------------
+  parameter real ron_atest  = 500  from (0:inf);
+  parameter real roff_atest = 1G   from (0:inf);
+  parameter real tsw_atest  = 10n  from (0:inf);
+
+  // -- supervisors ----------------------------------------------------------
+  parameter real vref_min  = 0.9   from [0:inf);  // ana_flag[1] below this
+  parameter real vmon_th   = 0.6   from [0:inf);  // ana_flag[2] below this
+  parameter integer flag3_force = 0 from [0:1];   // ana_flag[3] forced level
+
+  // -- fault injection ------------------------------------------------------
+  //  0 none
+  //  1 timeout        : never assert valid (exercises AMS TIMEOUT, fault b10)
+  //  2 stuck code     : always return fi_code
+  //  3 wrong channel  : convert channel (ch ^ 1)
+  //  4 out of range   : return full scale (exercises LIMITn range check)
+  //  5 stuck valid    : leave valid asserted after the conversion
+  //  6 no start ack   : ignore the start pulse entirely (silent hang)
+  parameter integer fi_mode    = 0 from [0:6];
+  parameter integer fi_ch      = -1 from [-1:7]; // -1 = every channel
+  // NOTE: an integer parameter range bound must be a finite integer
+  // constant -- `inf` here is a real and is illegal (LRM 3.6.2); the
+  // original carried `from [0:inf)`.
+  parameter integer fi_after_n = 0  from [0:2000000000];
+  parameter integer fi_code    = 0  from [0:4095];
+
+  // =========================================================================
+  // State
+  // =========================================================================
+  real    vth, vfs, nlev, lsb;
+  real    vsamp, xn, code_r, t_next;
+  integer chan, chan_eff, code, code_pend, bus_out;
+  integer st, valid_l, nconv, seed, armed;
+  integer ovr, ref_bad, mon_bad, atest_on, asel;
+  integer dac_code;
+  real    vdac_t, vatest_src, gsw;
+
+  // 0/1 from a node voltage
+  analog function integer dig;
+    input v, t; real v, t;
+    begin dig = (v > t) ? 1 : 0; end
+  endfunction
+
+  // Repeatable, code-dependent DNL: no seed, no transcendentals, so a
+  // real-number twin can reproduce it bit for bit.  (No such twin exists
+  // in this tree yet; the original header referred to adc_ams_emu_rnm.sv,
+  // which was never committed.)
+  //
+  // The modulus is taken on an integer intermediate: `%` applied to the
+  // real result of floor() is illegal Verilog-A (the original computed
+  // `(floor(c) * 7919) % 4093` directly, which strict compilers reject).
+  analog function real dnlerr;
+    input c, a; real c, a;
+    integer h;
+    begin
+      h = floor(c);                 // real -> integer at the assignment
+      h = (h * 7919) % 4093;        // integer modulus, well defined
+      if (h < 0) h = h + 4093;
+      dnlerr = a * (2.0 * (h / 4093.0) - 1.0);
+    end
+  endfunction
+
+  analog begin
+
+    // ---------------------------------------------------------------- init
+    @(initial_step) begin
+      vth      = vth_frac * vsup;
+      nlev     = pow(2.0, nbits);
+      st       = 0;
+      valid_l  = 0;
+      code_pend= 0;
+      bus_out  = 0;
+      nconv    = 0;
+      seed     = seed_p;
+      t_next   = 1e30;
+      ovr      = 0;
+      dac_code = dac_init;
+      vdac_t   = dac_vmin + dac_vfs * dac_init / (pow(2.0, dac_nbits) - 1.0);
+      atest_on = 0;
+      asel     = 0;
+      armed    = 0;
+      // Supervisor flags evaluated at t=0, not left at their implicit
+      // zero: a reference or monitor that is ALREADY bad at start-up
+      // produced no crossing in the original, so the flag stayed low
+      // until the first transition -- exactly the wrong behaviour for a
+      // supervisor whose job is to catch a bad supply at power-up.
+      ref_bad  = ((V(vrefp) - V(vrefn)) < vref_min) ? 1 : 0;
+      mon_bad  = (V(vmon) < vmon_th) ? 1 : 0;
+    end
+
+    // ------------------------------------------------- conversion start
+    // The subsystem drives adc_start_o high for exactly one clock cycle
+    // (verified: AS_START is a single state, gated by ch_selected).
+    @(cross(V(start) - vth, +1)) begin
+      if (st == 0) begin
+        chan  = dig(V(ch[0]),vth) + 2*dig(V(ch[1]),vth) + 4*dig(V(ch[2]),vth);
+        nconv = nconv + 1;
+        armed = ((nconv > fi_after_n) &&
+                 ((fi_ch < 0) || (fi_ch == chan))) ? 1 : 0;
+
+        chan_eff = (armed && (fi_mode == 3)) ? (chan ^ 1) : chan;
+
+        // ---- aperture: sample the selected channel now -------------------
+        case (chan_eff)
+          0: vsamp = V(vin[0]);
+          1: vsamp = V(vin[1]);
+          2: vsamp = V(vin[2]);
+          3: vsamp = V(vin[3]);
+          4: vsamp = V(vin[4]);
+          5: vsamp = V(vin[5]);
+          6: vsamp = V(vin[6]);
+          7: vsamp = V(vin[7]);
+          default: vsamp = V(vin[0]);
+        endcase
+        if (vnoise > 0.0) vsamp = vsamp + $rdist_normal(seed, 0.0, vnoise);
+
+        // ---- transfer function -------------------------------------------
+        vfs = V(vrefp) - V(vrefn);
+        xn  = (vfs > 0.0) ? (vsamp - V(vrefn)) / vfs : 0.0;
+        xn  = xn * (1.0 + gerr);
+        // S-shaped INL bow: zero at 0, 1/2 and 1, peak +-inl_lsb near 1/4, 3/4
+        if (inl_lsb > 0.0)
+          xn = xn + (inl_lsb / nlev) * 4.0*xn*(1.0 - xn)*(2.0*xn - 1.0);
+
+        code_r = xn * nlev + voff_lsb;
+        if (dnl_lsb > 0.0) code_r = code_r + dnlerr(floor(code_r), dnl_lsb);
+
+        ovr  = ((code_r < 0.0) || (code_r > (nlev - 1.0))) ? 1 : 0;
+        code = floor(code_r + 0.5);
+        if (code < 0)        code = 0;
+        if (code > nlev - 1) code = nlev - 1;
+
+        if (armed) begin
+          case (fi_mode)
+            2: code = fi_code;
+            4: begin code = nlev - 1; ovr = 1; end
+          endcase
+        end
+
+        code_pend = msb_align ? (code << (12 - nbits)) : code;
+
+        // ---- schedule ------------------------------------------------------
+        if (armed && (fi_mode == 6)) begin
+          st = 0;                                    // start ignored entirely
+        end else begin
+          st     = 1;
+          t_next = $abstime + tconv +
+                   ((tjit > 0.0) ? $rdist_normal(seed, 0.0, tjit) : 0.0);
+        end
+      end
+    end
+
+    // --------------------------------------------------- timed sequencer
+    // Self-rescheduling timer: t_next is always set to the next transition.
+    @(timer(t_next)) begin
+      case (st)
+        1: begin                       // conversion done: drive the bus first
+             bus_out = code_pend;
+             st      = 2;
+             t_next  = $abstime + tsu;
+           end
+        2: begin                       // then raise valid, unless FI says not
+             if (armed && (fi_mode == 1)) begin
+               st = 0; t_next = 1e30;               // timeout: no valid ever
+             end else begin
+               valid_l = 1;
+               st      = 3;
+               t_next  = $abstime + tvalid;
+             end
+           end
+        3: begin
+             if (armed && (fi_mode == 5)) begin
+               st = 0; t_next = 1e30;               // valid stuck high
+             end else begin
+               valid_l = 0;
+               st      = 0;
+               t_next  = 1e30;
+             end
+           end
+        default: t_next = 1e30;
+      endcase
+    end
+
+    // ------------------------------------------------------------ trim DAC
+    @(cross(V(dac_we) - vth, +1)) begin
+      // note: in Verilog `<<` binds looser than `+`, hence the parentheses
+      dac_code = (dig(V(dac_data[ 0]),vth)      ) + (dig(V(dac_data[ 1]),vth)<< 1) +
+                 (dig(V(dac_data[ 2]),vth)<< 2  ) + (dig(V(dac_data[ 3]),vth)<< 3) +
+                 (dig(V(dac_data[ 4]),vth)<< 4  ) + (dig(V(dac_data[ 5]),vth)<< 5) +
+                 (dig(V(dac_data[ 6]),vth)<< 6  ) + (dig(V(dac_data[ 7]),vth)<< 7) +
+                 (dig(V(dac_data[ 8]),vth)<< 8  ) + (dig(V(dac_data[ 9]),vth)<< 9) +
+                 (dig(V(dac_data[10]),vth)<<10  ) + (dig(V(dac_data[11]),vth)<<11);
+      if (dac_nbits < 12) dac_code = dac_code & (((1 << dac_nbits) - 1));
+      vdac_t = dac_vmin + dac_vfs * dac_code / (pow(2.0, dac_nbits) - 1.0);
+    end
+
+    // ------------------------------------------------------- analog test bus
+    @(cross(V(atest_en) - vth, 0)) atest_on = dig(V(atest_en), vth);
+
+    // ---------------------------------------------------------- supervisors
+    @(cross(V(vrefp) - V(vrefn) - vref_min, 0))
+      ref_bad = ((V(vrefp) - V(vrefn)) < vref_min) ? 1 : 0;
+    @(cross(V(vmon) - vmon_th, 0))
+      mon_bad = (V(vmon) < vmon_th) ? 1 : 0;
+
+    // =====================================================================
+    // Continuous contributions
+    // =====================================================================
+
+    // digital outputs
+    V(valid) <+ transition(valid_l ? vsup : 0.0, tdo, trise, tfall);
+    `DBIT(0);  `DBIT(1);  `DBIT(2);  `DBIT(3);
+    `DBIT(4);  `DBIT(5);  `DBIT(6);  `DBIT(7);
+    `DBIT(8);  `DBIT(9);  `DBIT(10); `DBIT(11);
+
+    V(ana_flag[0]) <+ transition(ovr         ? vsup : 0.0, tdo, trise, tfall);
+    V(ana_flag[1]) <+ transition(ref_bad     ? vsup : 0.0, tdo, trise, tfall);
+    V(ana_flag[2]) <+ transition(mon_bad     ? vsup : 0.0, tdo, trise, tfall);
+    V(ana_flag[3]) <+ transition(flag3_force ? vsup : 0.0, tdo, trise, tfall);
+
+    // trim DAC: Thevenin source behind rout_dac, first-order settling
+    I(dac_out) <+ (V(dac_out) - transition(vdac_t, 0.0, 1n, 1n)) / rout_dac
+                + ddt(cout_dac * V(dac_out));
+
+    // analog test bus: a real switch, so loading is visible to the DUT
+    asel = (dig(V(atest_sel[0]),vth)     ) + (dig(V(atest_sel[1]),vth)<<1) +
+           (dig(V(atest_sel[2]),vth)<<2  ) + (dig(V(atest_sel[3]),vth)<<3);
+    case (asel)
+      0: vatest_src = V(vin[0]);
+      1: vatest_src = V(vin[1]);
+      2: vatest_src = V(vin[2]);
+      3: vatest_src = V(vin[3]);
+      4: vatest_src = V(vin[4]);
+      5: vatest_src = V(vin[5]);
+      6: vatest_src = V(vin[6]);
+      7: vatest_src = V(vin[7]);
+      8: vatest_src = V(dac_out);
+      9: vatest_src = V(vmon);
+      10: vatest_src = V(vrefp);
+      11: vatest_src = V(vrefn);
+      12: vatest_src = 0.5 * (V(vrefp) + V(vrefn));   // mid-scale / vcm
+      default: vatest_src = V(vss);
+    endcase
+    gsw = transition(atest_on ? 1.0/ron_atest : 1.0/roff_atest,
+                     0.0, tsw_atest, tsw_atest);
+    I(atest) <+ (V(atest) - vatest_src) * gsw;
+
+  end
+endmodule

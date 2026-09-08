@@ -4,6 +4,13 @@
 // cdriscv-32s-10 -- top level of the core subsystem.
 //
 //   core (single or dual core lockstep)
+//   +-- QSPI boot loader (POST-SIGNOFF addition, elaborated only when
+//   |   BootEnable=1: fills the TCMs from external NOR flash at cold
+//   |   reset; a 2:1 mux makes it the temporary data-bus master until
+//   |   boot_done, and the core's fetch enable is gated by boot_done.
+//   |   With the default BootEnable=0 the loader, the mux and the gate
+//   |   fold away and this module is functionally identical to the
+//   |   signed-off 2026-08-24 configuration -- see cdriscv_qspi_boot)
 //   +-- bus  --+-- I-TCM (SEC-DED, BIST)
 //              +-- D-TCM (SEC-DED, BIST)
 //              +-- APB bridge --+-- safety controller   slot 0
@@ -41,7 +48,21 @@ module cdriscv_subsys
     parameter logic [31:0] DtcmBase    = 32'h1000_0000,
     parameter logic [31:0] PeriphBase  = 32'h2000_0000,
     parameter logic [31:0] HartId      = 32'h0000_0000,
-    parameter int unsigned WarmRstLen  = 16
+    parameter int unsigned WarmRstLen  = 16,
+
+    // QSPI boot loader (POST-SIGNOFF addition, see cdriscv_qspi_boot).
+    // BootEnable defaults to 0 -- the OPPOSITE of cdriscv-32s-20 --
+    // because this design is signed off: with 0 the loader and its mux
+    // fold away entirely, the QSPI outputs tie to constants, and the
+    // subsystem logic is identical to the signed-off configuration
+    // (every existing bench preloads the TCMs and is unaffected).  A
+    // chip build that wants flash boot sets BootEnable=1 and must
+    // re-verify and re-harden.
+    parameter bit          BootEnable  = 1'b0,
+    parameter int unsigned BootSclkDiv = 2,
+    parameter int unsigned BootRetryMax = 3,
+    parameter int unsigned BootTimeoutCycles = 1024,
+    parameter int unsigned BootQuadDummy = 4
 )(
     // system domain
     input  logic        clk_i,
@@ -89,7 +110,17 @@ module cdriscv_subsys
     output logic        core_sleep_o,
     output logic        retire_valid_o,
     output logic [31:0] retire_pc_o,
-    output logic [31:0] retire_instr_o
+    output logic [31:0] retire_instr_o,
+
+    // QSPI boot flash master (appended, POST-SIGNOFF).  Constant /
+    // ignored when BootEnable=0.  qspi_io_* map onto four bidirectional
+    // pads at chip level: pad b drives qspi_io_o[b] while
+    // qspi_io_oe_o[b] is set and returns on qspi_io_i[b].
+    output logic        qspi_sclk_o,
+    output logic        qspi_cs_no,
+    input  logic [3:0]  qspi_io_i,
+    output logic [3:0]  qspi_io_o,
+    output logic [3:0]  qspi_io_oe_o
 );
 
   localparam int unsigned ItcmBytes   = ItcmWords * 4;
@@ -155,6 +186,15 @@ module cdriscv_subsys
   logic [3:0]  data_be;
   logic [31:0] data_addr, data_wdata, data_rdata;
 
+  // core side of the boot-time data-master mux (cd_* = core data).
+  // The bus-facing data_* wires above are what the interconnect sees.
+  logic        cd_req, cd_gnt, cd_rvalid, cd_we, cd_err;
+  logic [3:0]  cd_be;
+  logic [31:0] cd_addr, cd_wdata, cd_rdata;
+
+  logic        boot_done, boot_fault;
+  logic [3:0]  boot_retries;
+
   logic        irq_soft, irq_timer, irq_ext;
   logic        f_rf_par, f_illegal, f_bus_err_core, f_sw, f_out_en, f_lockstep;
   logic        f_cfg_par;
@@ -165,7 +205,12 @@ module cdriscv_subsys
   logic        core_fetch_enable;
 
   assign mbist_busy        = mbist_busy_i_tcm || mbist_busy_d_tcm;
-  assign core_fetch_enable = fetch_enable_i && !mbist_busy;
+  // boot_done gates the fetch exactly as mbist_busy does: the core
+  // cannot issue a single fetch -- and therefore not a single data
+  // access -- before the loader has verified the image.  BootEnable=0
+  // (the default) ties boot_done to 1 and this line reduces to the
+  // signed-off original.
+  assign core_fetch_enable = fetch_enable_i && !mbist_busy && boot_done;
 
   if (Lockstep) begin : g_lockstep
     cdriscv_lockstep #(
@@ -184,15 +229,15 @@ module cdriscv_subsys
         .instr_addr_o    (instr_addr),
         .instr_rdata_i   (instr_rdata),
         .instr_err_i     (instr_err),
-        .data_req_o      (data_req),
-        .data_gnt_i      (data_gnt),
-        .data_rvalid_i   (data_rvalid),
-        .data_we_o       (data_we),
-        .data_be_o       (data_be),
-        .data_addr_o     (data_addr),
-        .data_wdata_o    (data_wdata),
-        .data_rdata_i    (data_rdata),
-        .data_err_i      (data_err),
+        .data_req_o      (cd_req),
+        .data_gnt_i      (cd_gnt),
+        .data_rvalid_i   (cd_rvalid),
+        .data_we_o       (cd_we),
+        .data_be_o       (cd_be),
+        .data_addr_o     (cd_addr),
+        .data_wdata_o    (cd_wdata),
+        .data_rdata_i    (cd_rdata),
+        .data_err_i      (cd_err),
         .irq_soft_i      (irq_soft),
         .irq_timer_i     (irq_timer),
         .irq_ext_i       (irq_ext),
@@ -227,15 +272,15 @@ module cdriscv_subsys
         .instr_addr_o    (instr_addr),
         .instr_rdata_i   (instr_rdata),
         .instr_err_i     (instr_err),
-        .data_req_o      (data_req),
-        .data_gnt_i      (data_gnt),
-        .data_rvalid_i   (data_rvalid),
-        .data_we_o       (data_we),
-        .data_be_o       (data_be),
-        .data_addr_o     (data_addr),
-        .data_wdata_o    (data_wdata),
-        .data_rdata_i    (data_rdata),
-        .data_err_i      (data_err),
+        .data_req_o      (cd_req),
+        .data_gnt_i      (cd_gnt),
+        .data_rvalid_i   (cd_rvalid),
+        .data_we_o       (cd_we),
+        .data_be_o       (cd_be),
+        .data_addr_o     (cd_addr),
+        .data_wdata_o    (cd_wdata),
+        .data_rdata_i    (cd_rdata),
+        .data_err_i      (cd_err),
         .irq_soft_i      (irq_soft),
         .irq_timer_i     (irq_timer),
         .irq_ext_i       (irq_ext),
@@ -251,6 +296,102 @@ module cdriscv_subsys
         .retire_instr_o  (retire_instr_o)
     );
   end
+
+  // ------------------------------------------------------------------
+  // QSPI boot loader and the boot-time data-master mux (POST-SIGNOFF)
+  // ------------------------------------------------------------------
+  // The mux sits HERE, at the subsystem level, between the core's LSU
+  // port and the bus's data-master port -- nothing inside the core
+  // changes, and the fetch path is untouched.  Until boot_done the
+  // loader owns the port; the core sees gnt/rvalid low (it cannot
+  // request anyway, since its fetch enable is gated by boot_done
+  // above).  The loader's writes therefore travel through the same
+  // bus -> TCM ECC-encode path a core store uses.
+  //
+  // Timing: the select (boot_done) is a register that changes ONCE per
+  // cold boot, and the mux is the loader's only touch on a functional
+  // path -- one 2:1 mux on the data-master request/response wires, off
+  // the fetch critical path.
+  //
+  // Reset: rst_n_sync, not core_rst_n -- a warm reset restarts the
+  // core from the already-verified image instead of reloading (the
+  // TCMs keep their contents across a warm reset for the same reason).
+  //
+  // BootEnable=0 (the DEFAULT -- this design is signed off): the
+  // loader is never elaborated, boot_done ties to 1, boot_active to 0,
+  // and every mux below folds to a wire.  The subsystem is then
+  // functionally identical to the signed-off 2026-08-24 configuration.
+  logic        bt_req, bt_gnt, bt_rvalid, bt_we;
+  logic [3:0]  bt_be;
+  logic [31:0] bt_addr, bt_wdata;
+  logic        boot_active;
+
+  if (BootEnable) begin : g_boot
+    cdriscv_qspi_boot #(
+        .SclkDiv       (BootSclkDiv),
+        .RetryMax      (BootRetryMax),
+        .TimeoutCycles (BootTimeoutCycles),
+        .QuadDummy     (BootQuadDummy),
+        .ItcmBase      (ItcmBase),
+        .ItcmBytes     (ItcmBytes),
+        .DtcmBase      (DtcmBase),
+        .DtcmBytes     (DtcmBytes)
+    ) u_boot (
+        .clk_i        (clk_i),
+        .rst_ni       (rst_n_sync),
+        .hold_i       (mbist_busy),      // the BIST owns the arrays first
+        .mst_req_o    (bt_req),
+        .mst_gnt_i    (bt_gnt),
+        .mst_rvalid_i (bt_rvalid),
+        .mst_we_o     (bt_we),
+        .mst_be_o     (bt_be),
+        .mst_addr_o   (bt_addr),
+        .mst_wdata_o  (bt_wdata),
+        .mst_err_i    (data_err),
+        .boot_retries_o (boot_retries),
+        .qspi_sclk_o  (qspi_sclk_o),
+        .qspi_cs_no   (qspi_cs_no),
+        .qspi_io_i    (qspi_io_i),
+        .qspi_io_o    (qspi_io_o),
+        .qspi_io_oe_o (qspi_io_oe_o),
+        .boot_done_o  (boot_done),
+        .boot_fault_o (boot_fault)
+    );
+  end else begin : g_boot_off
+    // loader absent: mux transparent, pads parked, TCM preload is the
+    // bench's business (hierarchical $readmemh, as always)
+    assign boot_done    = 1'b1;
+    assign boot_fault   = 1'b0;
+    assign boot_retries = 4'd0;
+    assign qspi_sclk_o  = 1'b0;
+    assign qspi_cs_no   = 1'b1;
+    assign qspi_io_o    = 4'b0;
+    assign qspi_io_oe_o = 4'b0;
+    assign bt_req   = 1'b0;
+    assign bt_we    = 1'b0;
+    assign bt_be    = 4'b0;
+    assign bt_addr  = 32'b0;
+    assign bt_wdata = 32'b0;
+
+    logic unused_boot;
+    assign unused_boot = |{qspi_io_i, bt_gnt, bt_rvalid};
+  end
+
+  assign boot_active = !boot_done;
+
+  assign data_req   = boot_active ? bt_req   : cd_req;
+  assign data_we    = boot_active ? bt_we    : cd_we;
+  assign data_be    = boot_active ? bt_be    : cd_be;
+  assign data_addr  = boot_active ? bt_addr  : cd_addr;
+  assign data_wdata = boot_active ? bt_wdata : cd_wdata;
+
+  assign cd_gnt     = !boot_active && data_gnt;
+  assign cd_rvalid  = !boot_active && data_rvalid;
+  assign cd_rdata   = data_rdata;
+  assign cd_err     = data_err;
+
+  assign bt_gnt     = boot_active && data_gnt;
+  assign bt_rvalid  = boot_active && data_rvalid;
 
   // ------------------------------------------------------------------
   // Interconnect
@@ -690,11 +831,18 @@ module cdriscv_subsys
     fault_int[FLT_AMS]           = ams_fault;
     fault_int[FLT_SW]            = f_sw;
     fault_int[FLT_CORE_TRAP]     = f_illegal;
+    // POST-SIGNOFF: sticky loader fault, routed like every other
+    // internal source (bit 14 was spare).  The safety controller's
+    // reset defaults (ENABLE/REACT_PIN all ones, CTRL.enable set)
+    // guarantee a cold-boot failure latches into STATUS and asserts
+    // err_pin_o with no software involved -- there IS no software on a
+    // failed boot.  Constant 0 when BootEnable=0.
+    fault_int[FLT_BOOT]          = boot_fault;
   end
 
   assign reset_req = sfty_reset_req || wdog_reset_req;
 
   logic unused_sigs;
-  assign unused_sigs = |{f_out_en, pstrb};
+  assign unused_sigs = |{f_out_en, pstrb, boot_retries};
 
 endmodule

@@ -1,0 +1,442 @@
+// -----------------------------------------------------------------------------
+// adc_ams_emu_osdi.va
+//
+// OpenVAF/OSDI-compatible CONTINUOUS-TIME reformulation of adc_ams_emu.va --
+// the ADC that sits opposite the cdriscv-32s-10 AMS interface
+// (rtl/periph/cdriscv_ams_if.sv, register slot 4; at chip level the
+// same signals appear on pads).  It replaces the earlier reduction that had
+// dropped conversion latency and the timing fault modes; this version keeps
+// them, expressed as continuous dynamics instead of events.
+//
+// WHY A SECOND MODEL EXISTS
+//
+// adc_ams_emu.va is event-driven Verilog-AMS: @(timer), @(cross),
+// transition(), $rdist_normal, an FSM in integers.  OpenVAF is an OSDI
+// compact-model compiler: it evaluates continuous contributions inside the
+// simulator's Newton loop and has no event engine; it crashes on the full
+// model.  This file is a genuine reformulation, not a trimmed copy: every
+// piece of state lives on an internal electrical node, and every "event"
+// is a region of a continuously ramping phase variable.
+//
+// WHAT THE OPENVAF PROBES MEASURED (2026-09-06, tiny throwaway models,
+// OpenVAF-reloaded 20260616-2-gc592eed; design decisions follow the probes,
+// not documentation):
+//   compiles:  floor(), integer %, ?: on reals, internal electrical nodes,
+//              ddt, idt, $abstime, absdelay, limexp, analog functions,
+//              white_noise, @(initial_step), case, shifts, $bound_step
+//              (also conditionally), $simparam, analysis()
+//   rejected:  vector ports `electrical [11:0]` (parse error) -> all digital
+//              buses are one SCALAR port per bit here
+//   runtime (ngspice-46 OSDI, transient): switched-conductance hold node
+//              holds (droop ~2 uV / 8 us at gleak=1p, chold=1p); ramp-timer
+//              valid pulse lands at t(start_fall)+tconv+tsu with the correct
+//              width; $bound_step resolves a 60 ns window inside a 2 us ramp.
+//   Constructs that compile but are NOT relied on for state: $abstime
+//   (an OSDI model is re-evaluated inside the Newton loop, so variables are
+//   not usable as sequential state -- state must live on nodes), absdelay,
+//   idt (internal node + ddt is the robust integrator form).
+//
+// ARCHITECTURE (all state on internal nodes)
+//
+//   hld  -- track & hold, stage 1 (the APERTURE).  High conductance gtrk to
+//           the channel-mux output while start is high, small leak (gleak,
+//           toward the live mux output) otherwise.  Acquisition tau =
+//           chold/gtrk = 1 ns << the 1-clk start pulse.
+//   tmr  -- conversion PHASE: a capacitor ramped at dx/dt = 1/tconv while
+//           start is low, reset to ~0 through a strong conductance while
+//           start is high, clamped a little past the end of the valid
+//           window.  x = V(tmr) is "time since start, in units of tconv":
+//             x in [1-tsu/tconv , 1]                : smp tracks hld
+//             x in (1+tsu/tconv , 1+(tsu+tvalid)/tconv): valid asserted
+//           $bound_step keeps the solver dense enough to resolve tsu/tvalid.
+//   smp  -- stage-2 hold: acquires hld only inside its window, so the DATA
+//           BUS updates tconv after the conversion begins and then HOLDS
+//           until the next conversion's window -- the contract's "data
+//           settled tsu before valid rises, held until the next conversion".
+//           data* = quantiser(V(smp)) behind an RC output stage.
+//   cnt  -- conversion counter for fi_after_n: integrates the RAW valid
+//           window gate divided by tvalid, i.e. +1.0 per completed
+//           conversion; clamped just above the arming threshold.
+//   armh -- fault-arming latch: acquires the live cnt/channel arming
+//           decision while start is high, holds it through the conversion,
+//           so a mid-window counter crossing cannot glitch published data.
+//   dach -- trim-DAC hold: tracks the value decoded from dac_data* while
+//           dac_we is high, holds it after; leak biases it to dac_init.
+//   aswg -- atest switch gate: first-order (tau = tsw_atest/2.2) slew of the
+//           digitised atest_en, linearly interpolating gon..goff, replacing
+//           transition() on the conductance.
+//
+// Digital outputs (valid, data*, ana_flag*) are driven through an asymmetric
+// RC (separate rise/fall conductances against cdig), replacing transition().
+//
+// FAULT INJECTION: all seven modes of the behavioural model are kept.
+//   1 timeout        : the valid gate is suppressed (window still counts)
+//   2 stuck code     : published code forced to fi_code
+//   3 wrong channel  : the aperture mux selects ch^1
+//   4 out of range   : published code = full scale, ovr forced
+//   5 stuck valid    : valid stays high past its window, until the next
+//                      start resets the phase ramp (the behavioural model
+//                      also re-clears it at the next conversion's sequencer)
+//   6 no start ack   : start neither resets the phase ramp nor opens the
+//                      stage-1 track switch -- silent hang, no new valid/data
+//
+// DEVIATIONS FROM THE BEHAVIOURAL MODEL, AND WHY (contract per the header of
+// adc_ams_emu.va, verified against the RTL 2026-09-06):
+//   * Aperture instant is the FALLING edge of start (hold begins when the
+//     track switch opens), not the rising edge; the phase ramp is also
+//     released at the falling edge.  Both are late by exactly the 1-clk
+//     start pulse width (40 ns at 25 MHz, vs tconv = 2 us).  A continuous
+//     T&H has no way to act on an edge; the FSM tolerates this by
+//     construction (TIMEOUT is programmed with margin over tconv).
+//   * Conversions are counted by integrating this model's own valid window
+//     (width tvalid is model-defined, so the integral is exactly 1 per
+//     completed conversion).  The counter reads k-1 at the aperture of
+//     conversion k, and the arming decision is LATCHED there (node armh),
+//     so conversion k is faulted iff k > fi_after_n -- bit-identical to the
+//     original's nconv semantics, with no mid-window glitch (the unlatched
+//     version measurably forced fi_code onto the bus while valid was high).
+//   * The trim-DAC code is captured at the falling edge of dac_we (track
+//     while high, hold after) instead of the rising edge; the RTL holds
+//     dac_data_o registered and stable across its 1-cycle strobe, so the
+//     captured value is identical.
+//   * ana_flag0 (over-range) follows the PUBLISHED sample, so it updates
+//     with the data bus (at tconv) rather than at the aperture; ana_flag1/2
+//     are live continuous comparators, which also preserves the
+//     bad-at-power-up behaviour the original had to special-case at t=0.
+//   * tjit, vnoise, seed_p are DROPPED: OSDI has no per-evaluation RNG
+//     ($rdist_normal does not exist; white_noise compiles but only feeds
+//     .noise, not transient).  Use voff_lsb/gerr/inl_lsb/dnl_lsb for static
+//     error, or the behavioural model for stochastic error.
+//   * tdo (extra output delay) is DROPPED (default was 0); edge shaping is
+//     the RC pair trise/tfall.
+//   * mode 5 note above; mode-armed checks use the LIVE channel pins, which
+//     assumes adc_ch_o is held stable during a conversion (it is: registered
+//     in the AMS interface FSM).
+//
+// tsu must exceed a few output time constants (trise/2.2 ~ 90 ps at default)
+// for "data settled tsu before valid" to hold; the default 4 ns does.
+//
+// Compiles clean under OpenVAF (openvaf adc_ams_emu_osdi.va -> .osdi) and
+// runs under this tree's OSDI ngspice.  See doc/integration.md 2a.
+//
+// (c) 2026 ChipDesign B.V. -- Apache-2.0
+// -----------------------------------------------------------------------------
+
+`include "disciplines.vams"
+
+// digital output driver: asymmetric RC toward vt, replaces transition()
+`define DRVDIG(pin, vt) \
+  I(pin) <+ ddt(cdig * V(pin)) \
+          + (((vt) > V(pin)) ? (cdig * 2.2 / trise) : (cdig * 2.2 / tfall)) \
+            * (V(pin) - (vt))
+
+// one bit of the data bus
+`define DBIT(pin, n) `DRVDIG(pin, (((code_pub >> n) & 1) ? vsup : 0.0))
+
+module adc_ams_emu_osdi (
+    start, ch0, ch1, ch2,
+    valid,
+    data0, data1, data2, data3, data4, data5,
+    data6, data7, data8, data9, data10, data11,
+    dac_we,
+    dac_data0, dac_data1, dac_data2,  dac_data3,  dac_data4,  dac_data5,
+    dac_data6, dac_data7, dac_data8,  dac_data9,  dac_data10, dac_data11,
+    dac_out,
+    atest_en, atest_sel0, atest_sel1, atest_sel2, atest_sel3, atest,
+    ana_flag0, ana_flag1, ana_flag2, ana_flag3,
+    vin0, vin1, vin2, vin3, vin4, vin5, vin6, vin7,
+    vmon, vrefp, vrefn, vss);
+
+  // ---- digital control inputs --------------------------------------------
+  inout start, ch0, ch1, ch2, dac_we, atest_en;
+  electrical start, ch0, ch1, ch2, dac_we, atest_en;
+  inout dac_data0, dac_data1, dac_data2, dac_data3, dac_data4, dac_data5;
+  inout dac_data6, dac_data7, dac_data8, dac_data9, dac_data10, dac_data11;
+  electrical dac_data0, dac_data1, dac_data2, dac_data3, dac_data4, dac_data5;
+  electrical dac_data6, dac_data7, dac_data8, dac_data9, dac_data10, dac_data11;
+  inout atest_sel0, atest_sel1, atest_sel2, atest_sel3;
+  electrical atest_sel0, atest_sel1, atest_sel2, atest_sel3;
+
+  // ---- digital outputs ----------------------------------------------------
+  inout valid;
+  electrical valid;
+  inout data0, data1, data2, data3, data4, data5;
+  inout data6, data7, data8, data9, data10, data11;
+  electrical data0, data1, data2, data3, data4, data5;
+  electrical data6, data7, data8, data9, data10, data11;
+  inout ana_flag0, ana_flag1, ana_flag2, ana_flag3;
+  electrical ana_flag0, ana_flag1, ana_flag2, ana_flag3;
+
+  // ---- analog -------------------------------------------------------------
+  inout vin0, vin1, vin2, vin3, vin4, vin5, vin6, vin7;
+  electrical vin0, vin1, vin2, vin3, vin4, vin5, vin6, vin7;
+  inout vmon, vrefp, vrefn, vss, dac_out, atest;
+  electrical vmon, vrefp, vrefn, vss, dac_out, atest;
+
+  // ---- internal state nodes (see ARCHITECTURE above) ----------------------
+  electrical hld, smp, tmr, cnt, dach, aswg, armh;
+
+  // =========================================================================
+  // Parameters -- same names and defaults as the behavioural model where
+  // they still apply; tjit/vnoise/seed_p/tdo are dropped (header).
+  // =========================================================================
+
+  // -- logic levels ---------------------------------------------------------
+  parameter real vsup      = 1.2   from (0:inf);
+  parameter real vth_frac  = 0.5   from (0:1);
+  parameter real trise     = 200p  from (0:inf);
+  parameter real tfall     = 200p  from (0:inf);
+
+  // -- conversion timing ----------------------------------------------------
+  parameter real tconv     = 2u    from (0:inf);  // start(fall) -> data
+  parameter real tsu       = 4n    from (0:inf);  // data settled before valid
+  parameter real tvalid    = 60n   from (0:inf);  // valid pulse width
+
+  // -- transfer function ----------------------------------------------------
+  parameter integer nbits  = 12    from [4:12];
+  parameter integer msb_align = 0  from [0:1];
+  parameter real voff_lsb  = 0.0;
+  parameter real gerr      = 0.0;
+  parameter real inl_lsb   = 0.0   from [0:inf);
+  parameter real dnl_lsb   = 0.0   from [0:inf);
+
+  // -- trim DAC -------------------------------------------------------------
+  parameter integer dac_nbits = 12 from [4:12];
+  parameter real dac_vfs   = 1.2   from (0:inf);
+  parameter real dac_vmin  = 0.0;
+  parameter integer dac_init = 0   from [0:4095];
+  parameter real rout_dac  = 1k    from (0:inf);
+  parameter real cout_dac  = 1p    from (0:inf);
+
+  // -- analog test bus ------------------------------------------------------
+  parameter real ron_atest  = 500  from (0:inf);
+  parameter real roff_atest = 1G   from (0:inf);
+  parameter real tsw_atest  = 10n  from (0:inf);
+
+  // -- supervisors ----------------------------------------------------------
+  parameter real vref_min  = 0.9   from [0:inf);
+  parameter real vmon_th   = 0.6   from [0:inf);
+  parameter integer flag3_force = 0 from [0:1];
+
+  // -- fault injection (all seven modes of the behavioural model) -----------
+  parameter integer fi_mode    = 0 from [0:6];
+  parameter integer fi_ch      = -1 from [-1:7]; // -1 = every channel
+  parameter integer fi_after_n = 0  from [0:2000000000];
+  parameter integer fi_code    = 0  from [0:4095];
+
+  // -- model internals (exposed for tuning, sane defaults) ------------------
+  parameter real chold = 1p   from (0:inf); // T&H / phase / gate capacitance
+  parameter real gtrk  = 1m   from (0:inf); // track conductance (tau = 1n)
+  parameter real gleak = 1p   from (0:inf); // hold leak (tau = 1s)
+  parameter real gbig  = 1m   from (0:inf); // reset / clamp conductance
+  parameter real cdig  = 20f  from (0:inf); // digital output capacitance
+
+  real    vth, nlev, vfs, xn, code_r, vsamp, vdac_live, vdac_init;
+  real    x, xg, xd1, xv1, xv2, xclamp, s, s_we, gsmp, wraw, aon, gsw, vatest_src;
+  integer chan, chan_eff, code, code_pub, armed, armed_l, ign;
+  integer ovr, ref_bad, mon_bad, asel, dac_code, vgate;
+
+  analog function integer dig;
+    input v, t; real v, t;
+    begin dig = (v > t) ? 1 : 0; end
+  endfunction
+
+  // repeatable, code-dependent DNL; modulus on an integer intermediate
+  // (the real-modulus bug the behavioural model carried is avoided here too)
+  analog function real dnlerr;
+    input c, a; real c, a;
+    integer h;
+    begin
+      h = floor(c);
+      h = (h * 7919) % 4093;
+      if (h < 0) h = h + 4093;
+      dnlerr = a * (2.0 * (h / 4093.0) - 1.0);
+    end
+  endfunction
+
+  analog begin
+
+    vth  = vth_frac * vsup;
+    nlev = pow(2.0, nbits);
+
+    // phase thresholds, in units of tconv
+    xd1    = 1.0 - tsu / tconv;              // smp tracking window opens
+    xv1    = 1.0 + tsu / tconv;              // valid rises
+    xv2    = 1.0 + (tsu + tvalid) / tconv;   // valid falls
+    xclamp = xv2 + 0.05;
+
+    // ---- digitised controls ------------------------------------------------
+    s    = dig(V(start),  vth) ? 1.0 : 0.0;
+    s_we = dig(V(dac_we), vth) ? 1.0 : 0.0;
+    chan = dig(V(ch0),vth) + 2*dig(V(ch1),vth) + 4*dig(V(ch2),vth);
+
+    // ---- fault arming ------------------------------------------------------
+    // V(cnt) ~ number of COMPLETED conversions (counter below).  At the
+    // aperture of conversion k the counter reads k-1, so the live test
+    // cnt > fi_after_n - 0.5 arms conversion k iff k > fi_after_n -- the
+    // original's nconv semantics.  The live value crosses its threshold in
+    // the MIDDLE of valid window fi_after_n, so it must not drive the
+    // published outputs directly (measured: it glitched the held code to
+    // fi_code while valid was still high).  It is therefore LATCHED at the
+    // aperture on hold node armh (track while start high, hold after), and
+    // all published-output overrides use the latched value.
+    armed = ((fi_mode != 0) &&
+             (V(cnt) > fi_after_n - 0.5) &&
+             ((fi_ch < 0) || (fi_ch == chan))) ? 1 : 0;
+
+    I(armh) <+ ddt(chold * V(armh));
+    I(armh) <+ (s * gtrk + gleak) * (V(armh) - (armed ? 1.0 : 0.0));
+    armed_l = (V(armh) > 0.5) ? 1 : 0;
+
+    // start-drop uses live OR latched: live gates the reset from the very
+    // first instant of the ignored start pulse (the latch needs ~1 ns to
+    // acquire, long enough for the strong reset to half-drain the phase
+    // ramp and fake a shortened conversion)
+    ign = ((fi_mode == 6) && (armed || armed_l)) ? 1 : 0;
+
+    // aperture mux select may use the live value: cnt is stable across the
+    // start pulse, and this avoids the latch-acquisition race at the mux
+    chan_eff = (armed && (fi_mode == 3)) ? (chan ^ 1) : chan;
+
+    // ---- aperture mux ------------------------------------------------------
+    case (chan_eff)
+      0: vsamp = V(vin0);
+      1: vsamp = V(vin1);
+      2: vsamp = V(vin2);
+      3: vsamp = V(vin3);
+      4: vsamp = V(vin4);
+      5: vsamp = V(vin5);
+      6: vsamp = V(vin6);
+      7: vsamp = V(vin7);
+      default: vsamp = V(vin0);
+    endcase
+
+    // ---- stage-1 track & hold: track while start high (unless ignored),
+    //      leak toward the live mux output defines the DC solution ----------
+    I(hld) <+ ddt(chold * V(hld));
+    I(hld) <+ (s * (1.0 - ign) * gtrk + gleak) * (V(hld) - vsamp);
+
+    // ---- conversion phase ramp --------------------------------------------
+    x = V(tmr);
+    I(tmr) <+ ddt(chold * V(tmr));
+    I(tmr) <+ -chold / tconv;                            // ramp: dx/dt = 1/tconv
+    I(tmr) <+ gbig * s * (1.0 - ign) * V(tmr);           // reset while start high
+    I(tmr) <+ (x > xclamp) ? gbig * (x - xclamp) : 0.0;  // clamp past the window
+
+    // keep the solver dense enough to resolve the tsu/tvalid structure
+    if (x < xclamp) begin
+      if ((x > xd1 - 0.03) && (x < xv2 + 0.03))
+        $bound_step(((tsu < tvalid) ? tsu : tvalid) / 6.0);
+      else
+        $bound_step(tconv / 50.0);
+    end
+    if (s > 0.5) $bound_step(2n);   // resolve reset + stage-1 acquisition
+
+    // ---- stage-2 hold: publish the sample at x = 1 (t = tconv) ------------
+    gsmp = chold * 10.0 / tsu;      // settles in the tsu-wide window
+    I(smp) <+ ddt(chold * V(smp));
+    I(smp) <+ ((((x > xd1) && (x < 1.0)) ? gsmp : 0.0) + gleak)
+              * (V(smp) - V(hld));
+
+    // ---- conversion counter: +1 per completed raw valid window ------------
+    wraw = ((x > xv1) && (x < xv2)) ? 1.0 : 0.0;
+    I(cnt) <+ ddt(chold * V(cnt));
+    I(cnt) <+ -chold * wraw / tvalid;
+    I(cnt) <+ gleak * V(cnt);
+    I(cnt) <+ (V(cnt) > fi_after_n + 1.0) ? gbig * (V(cnt) - fi_after_n - 1.0)
+                                          : 0.0;
+
+    // ---- quantiser on the published sample --------------------------------
+    vfs = V(vrefp) - V(vrefn);
+    xn  = (vfs > 0.0) ? (V(smp) - V(vrefn)) / vfs : 0.0;
+    xn  = xn * (1.0 + gerr);
+    // S-shaped INL bow: zero at 0, 1/2 and 1, peak +-inl_lsb near 1/4, 3/4
+    if (inl_lsb > 0.0)
+      xn = xn + (inl_lsb / nlev) * 4.0*xn*(1.0 - xn)*(2.0*xn - 1.0);
+
+    code_r = xn * nlev + voff_lsb;
+    if (dnl_lsb > 0.0) code_r = code_r + dnlerr(floor(code_r), dnl_lsb);
+
+    ovr  = ((code_r < 0.0) || (code_r > (nlev - 1.0))) ? 1 : 0;
+    code = floor(code_r + 0.5);
+    if (code < 0)        code = 0;
+    if (code > nlev - 1) code = nlev - 1;
+
+    if (armed_l && (fi_mode == 2)) code = fi_code;
+    if (armed_l && (fi_mode == 4)) begin code = nlev - 1; ovr = 1; end
+
+    code_pub = msb_align ? (code << (12 - nbits)) : code;
+
+    // ---- valid gate --------------------------------------------------------
+    if (armed_l && (fi_mode == 1))      vgate = 0;                      // timeout
+    else if (armed_l && (fi_mode == 5)) vgate = (x > xv1) ? 1 : 0;      // stuck
+    else                              vgate = ((x > xv1) && (x < xv2)) ? 1 : 0;
+
+    // ---- supervisors (live continuous comparators) ------------------------
+    ref_bad = (vfs < vref_min)    ? 1 : 0;
+    mon_bad = (V(vmon) < vmon_th) ? 1 : 0;
+
+    // =====================================================================
+    // Output contributions
+    // =====================================================================
+
+    `DRVDIG(valid, vgate ? vsup : 0.0);
+    `DBIT(data0,  0);  `DBIT(data1,  1);  `DBIT(data2,   2);  `DBIT(data3,   3);
+    `DBIT(data4,  4);  `DBIT(data5,  5);  `DBIT(data6,   6);  `DBIT(data7,   7);
+    `DBIT(data8,  8);  `DBIT(data9,  9);  `DBIT(data10, 10);  `DBIT(data11, 11);
+
+    `DRVDIG(ana_flag0, ovr         ? vsup : 0.0);
+    `DRVDIG(ana_flag1, ref_bad     ? vsup : 0.0);
+    `DRVDIG(ana_flag2, mon_bad     ? vsup : 0.0);
+    `DRVDIG(ana_flag3, flag3_force ? vsup : 0.0);
+
+    // ---- trim DAC: code captured while dac_we is high, held after ---------
+    dac_code = (dig(V(dac_data0 ),vth)     ) + (dig(V(dac_data1 ),vth)<< 1) +
+               (dig(V(dac_data2 ),vth)<< 2 ) + (dig(V(dac_data3 ),vth)<< 3) +
+               (dig(V(dac_data4 ),vth)<< 4 ) + (dig(V(dac_data5 ),vth)<< 5) +
+               (dig(V(dac_data6 ),vth)<< 6 ) + (dig(V(dac_data7 ),vth)<< 7) +
+               (dig(V(dac_data8 ),vth)<< 8 ) + (dig(V(dac_data9 ),vth)<< 9) +
+               (dig(V(dac_data10),vth)<<10 ) + (dig(V(dac_data11),vth)<<11);
+    if (dac_nbits < 12) dac_code = dac_code & ((1 << dac_nbits) - 1);
+    vdac_live = dac_vmin + dac_vfs * dac_code / (pow(2.0, dac_nbits) - 1.0);
+    vdac_init = dac_vmin + dac_vfs * dac_init / (pow(2.0, dac_nbits) - 1.0);
+
+    I(dach) <+ ddt(chold * V(dach));
+    I(dach) <+ s_we * gtrk * (V(dach) - vdac_live);
+    I(dach) <+ gleak * (V(dach) - vdac_init);        // DC = code after reset
+
+    // Thevenin source behind rout_dac, first-order settling
+    I(dac_out) <+ (V(dac_out) - V(dach)) / rout_dac + ddt(cout_dac * V(dac_out));
+
+    // ---- analog test bus: a real switch, so loading is visible ------------
+    asel = (dig(V(atest_sel0),vth)     ) + (dig(V(atest_sel1),vth)<<1) +
+           (dig(V(atest_sel2),vth)<<2  ) + (dig(V(atest_sel3),vth)<<3);
+    case (asel)
+      0: vatest_src = V(vin0);
+      1: vatest_src = V(vin1);
+      2: vatest_src = V(vin2);
+      3: vatest_src = V(vin3);
+      4: vatest_src = V(vin4);
+      5: vatest_src = V(vin5);
+      6: vatest_src = V(vin6);
+      7: vatest_src = V(vin7);
+      8: vatest_src = V(dac_out);
+      9: vatest_src = V(vmon);
+      10: vatest_src = V(vrefp);
+      11: vatest_src = V(vrefn);
+      12: vatest_src = 0.5 * (V(vrefp) + V(vrefn));   // mid-scale / vcm
+      default: vatest_src = V(vss);
+    endcase
+
+    // switch gate slews with tau = tsw_atest/2.2, interpolating gon..goff
+    aon = dig(V(atest_en), vth) ? 1.0 : 0.0;
+    I(aswg) <+ ddt(chold * V(aswg));
+    I(aswg) <+ (chold * 2.2 / tsw_atest) * (V(aswg) - aon);
+    xg = V(aswg);
+    if (xg < 0.0) xg = 0.0;
+    if (xg > 1.0) xg = 1.0;
+    gsw = xg / ron_atest + (1.0 - xg) / roff_atest;
+    I(atest) <+ (V(atest) - vatest_src) * gsw;
+
+  end
+endmodule

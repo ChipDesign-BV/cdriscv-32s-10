@@ -36,7 +36,7 @@ OBJDUMP    := $(CROSS)objdump
 ARCH       := rv32im_zicsr_zifencei
 ABI        := ilp32
 
-.PHONY: all lint lint-tb sim sw synth ecc clean block block-alu block-ecc block-multdiv block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi cosim cosim-iverilog cosim-stall cosim-random
+.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi cosim cosim-iverilog cosim-stall cosim-random
 
 all: lint
 
@@ -45,8 +45,14 @@ WAIVERS := verif/lint/waivers.vlt
 
 # No -Wno-fatal: a new warning that is not waived in $(WAIVERS) fails
 # the build.  Every waiver in that file carries its justification.
+# Run twice: the default configuration (BootEnable=0, the signed-off
+# one) and BootEnable=1, because with the default the QSPI boot loader
+# sits in an unelaborated generate branch and the first run alone would
+# never lint it.
 lint:
 	$(VERILATOR) --lint-only -sv --timing -Wall \
+	  --top-module $(TOP) $(WAIVERS) $(RTL)
+	$(VERILATOR) --lint-only -sv --timing -Wall -GBootEnable=1 \
 	  --top-module $(TOP) $(WAIVERS) $(RTL)
 
 # The RTL carries no `timescale (the tool default applies); the bench
@@ -86,6 +92,50 @@ TCM_WORDS ?= 4096
 
 $(BUILD)/%.hex: $(BUILD)/%.bin
 	$(PYTHON) scripts/mkimage.py $< $@ --words $(TCM_WORDS)
+
+# ------------------------------------------------------------- bootsim
+# The QSPI boot path at system level (POST-SIGNOFF addition): the ONE
+# build with BootEnable=1.  EMPTY TCMs, the flash model holds a real
+# image of the smoke program (packed by scripts/mkbootimg.py), and the
+# run must end in the program's own PASS.  Run twice: 1-bit payload and
+# quad payload.  --pad0 64 gives the prefetcher valid ECC codewords
+# past the program end (finding V4-F2) without paying for a full-array
+# load over SPI.  Everything else in this Makefile keeps BootEnable at
+# its default 0 -- the signed-off configuration.
+$(BUILD)/boot_flash.hex: $(BUILD)/prog.itcm.bin $(BUILD)/prog.dtcm.bin scripts/mkbootimg.py
+	$(PYTHON) scripts/mkbootimg.py $@ \
+	  --seg 0x00000000 $(BUILD)/prog.itcm.bin \
+	  --seg 0x10000000 $(BUILD)/prog.dtcm.bin --pad0 64
+
+$(BUILD)/boot_flash_quad.hex: $(BUILD)/prog.itcm.bin $(BUILD)/prog.dtcm.bin scripts/mkbootimg.py
+	$(PYTHON) scripts/mkbootimg.py $@ \
+	  --seg 0x00000000 $(BUILD)/prog.itcm.bin \
+	  --seg 0x10000000 $(BUILD)/prog.dtcm.bin --pad0 64 --quad
+
+$(BUILD)/tb_cdriscv_boot.vvp: $(RTL) verif/models/cdriscv_spi_norflash_model.sv \
+                              tb/tb_cdriscv_boot.sv | $(BUILD)
+	$(IVERILOG) -g2012 -o $@ -s tb_cdriscv_boot $(RTL) \
+	  verif/models/cdriscv_spi_norflash_model.sv tb/tb_cdriscv_boot.sv
+
+bootsim: $(BUILD)/tb_cdriscv_boot.vvp $(BUILD)/boot_flash.hex $(BUILD)/boot_flash_quad.hex
+	$(VVP) $(BUILD)/tb_cdriscv_boot.vvp +FLASH_HEX=$(BUILD)/boot_flash.hex \
+	  | tee $(BUILD)/bootsim.log
+	@grep -q "\[TB\] PASS" $(BUILD)/bootsim.log
+	$(VVP) $(BUILD)/tb_cdriscv_boot.vvp +FLASH_HEX=$(BUILD)/boot_flash_quad.hex \
+	  | tee $(BUILD)/bootsim_quad.log
+	@grep -q "\[TB\] PASS" $(BUILD)/bootsim_quad.log
+
+# +CORRUPT flips one payload bit: the loader must retry, latch the
+# sticky fault into the safety controller (FLT_BOOT, bit 14), assert
+# err_pin through the reset-default reactions, and never release the
+# core.
+bootsim-fault: $(BUILD)/tb_cdriscv_boot.vvp $(BUILD)/boot_flash.hex $(BUILD)/boot_flash_quad.hex
+	$(VVP) $(BUILD)/tb_cdriscv_boot.vvp +FLASH_HEX=$(BUILD)/boot_flash.hex +CORRUPT \
+	  | tee $(BUILD)/bootsim.log
+	@grep -q "PASS corrupt-image" $(BUILD)/bootsim.log
+	$(VVP) $(BUILD)/tb_cdriscv_boot.vvp +FLASH_HEX=$(BUILD)/boot_flash_quad.hex +CORRUPT \
+	  | tee $(BUILD)/bootsim_quad.log
+	@grep -q "PASS corrupt-image" $(BUILD)/bootsim_quad.log
 
 # -------------------------------------------------------- block benches
 # Each block bench prints "PASS" or "FAIL"; the recipe greps for the
@@ -143,7 +193,18 @@ block-multdiv: $(BUILD)/tb_multdiv.vvp $(MD_VECTORS)
 	  +NVEC=$$(wc -l < $(MD_VECTORS)) | tee $(BUILD)/block_multdiv.log
 	@grep -q "PASS" $(BUILD)/block_multdiv.log
 
-block: block-alu block-ecc block-multdiv block-clkmon
+# The QSPI boot loader against the behavioural NOR flash model and a
+# TCM-shaped write monitor.  Mutation-validated by scripts/mutate_qspi.py.
+$(BUILD)/tb_qspi_boot.vvp: rtl/boot/cdriscv_qspi_boot.sv \
+                           verif/models/cdriscv_spi_norflash_model.sv \
+                           verif/block/qspi_boot/tb_qspi_boot.sv | $(BUILD)
+	$(IVERILOG) -g2012 -o $@ -s tb_qspi_boot $^
+
+block-qspi: $(BUILD)/tb_qspi_boot.vvp
+	$(VVP) $< | tee $(BUILD)/block_qspi.log
+	@grep -q "PASS" $(BUILD)/block_qspi.log
+
+block: block-alu block-ecc block-multdiv block-clkmon block-qspi
 
 # ------------------------------------------------- core co-simulation
 # Runs one program on Spike and on the RTL and compares the retired

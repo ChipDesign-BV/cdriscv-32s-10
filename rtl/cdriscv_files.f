@@ -25,4 +25,5 @@ rtl/bus/cdriscv_apb_bridge.sv
 rtl/periph/cdriscv_timer.sv
 rtl/periph/cdriscv_irq_ctrl.sv
 rtl/periph/cdriscv_ams_if.sv
+rtl/boot/cdriscv_qspi_boot.sv
 rtl/cdriscv_subsys.sv

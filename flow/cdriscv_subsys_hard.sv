@@ -76,6 +76,17 @@ module cdriscv_subsys_hard (
       .core_sleep_o   (core_sleep_o),
       .retire_valid_o (retire_valid_o),
       .retire_pc_o    (retire_pc_o),
-      .retire_instr_o (retire_instr_o)
+      .retire_instr_o (retire_instr_o),
+      // QSPI boot loader (POST-SIGNOFF addition): BootEnable stays at
+      // its default 0, so the loader does not exist in this netlist,
+      // the outputs are constants and nothing here reaches a pin --
+      // the hardened top's port list is unchanged from the signed-off
+      // run.  A chip build that boots from flash must set
+      // BootEnable=1, route these five ports to pads, and re-harden.
+      .qspi_sclk_o    (),
+      .qspi_cs_no     (),
+      .qspi_io_i      (4'b0000),
+      .qspi_io_o      (),
+      .qspi_io_oe_o   ()
   );
 endmodule
