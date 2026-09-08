@@ -127,11 +127,10 @@ module cdriscv_qspi_boot #(
 
     // Field telemetry: how many retries the successful (or final) boot
     // attempt consumed.  A unit that boots after two retries has a
-    // degrading flash; without this signal that fact is invisible
-    // until it becomes a unit that does not boot at all.  cdriscv-32s-10
-    // has no register exposing it (boot_fault is surfaced as FLT_BOOT
-    // in the safety controller instead); the port is provided for a
-    // chip build to expose and is left unconnected by cdriscv_subsys.
+    // degrading flash; without this register that fact is invisible
+    // until it becomes a unit that does not boot at all.  Surfaced by
+    // the safety controller's STATUS2 (0x2c); boot_fault reaches the
+    // error pin ungated through its dedicated safety-controller port.
     output logic [3:0]  boot_retries_o,
 
     // QSPI pads

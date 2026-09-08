@@ -207,9 +207,9 @@ module tb_cdriscv_boot;
       if (corrupt_mode) begin
         // Flip one bit in the first payload byte (offset 0x1c).  The
         // header stays valid, so the loader reads the full image and
-        // must fail the CRC -- exercising retry, sticky fault, FLT_BOOT
-        // into the safety controller and its err_pin reaction, end to
-        // end.  In corrupt mode the timeout IS
+        // must fail the CRC -- exercising retry, then boot_fault into
+        // the safety controller's dedicated ungated port and its
+        // err_pin reaction, end to end.  In corrupt mode the timeout IS
         // the verdict point; keep it long enough for all 4 attempts.
         u_flash.mem[32'h1c] = u_flash.mem[32'h1c] ^ 8'h01;
         if (!$value$plusargs("MAX_CYCLES=%d", max_cycles)) max_cycles = 80000;
@@ -257,8 +257,9 @@ module tb_cdriscv_boot;
       cycle++;
       if (exit_seen) begin
         if (exit_code == 32'b0 && errors == 0 && boot_done && !err_pin) begin
-          // err_pin must be LOW after a clean boot: FLT_BOOT (bit 14)
-          // must not have latched into the safety controller's status.
+          // err_pin must be LOW after a clean boot: boot_fault is 0, so
+          // the safety controller's ungated boot_fault term leaves the
+          // pin driven only by the (quiet) fault reactions.
           $display("[TB] PASS after %0d cycles (boot at %0d)", cycle, boot_cycle);
         end else begin
           $display("[TB] FAIL, exit code %08x, %0d bench errors", exit_code, errors);
@@ -268,10 +269,11 @@ module tb_cdriscv_boot;
       if (cycle >= max_cycles) begin
         if (corrupt_mode) begin
           // +CORRUPT: the timeout IS the pass condition -- the core must
-          // never start.  Verdict: fault latched (FLT_BOOT reaches
-          // err_pin through the safety controller's reset-default
-          // reactions -- no software exists to configure any), zero
-          // instructions retired.
+          // never start.  Verdict: boot_fault reaches err_pin through
+          // the safety controller's dedicated ungated boot_fault_i term
+          // -- no software exists to configure any reaction, and the
+          // fault deliberately does not latch into the sticky status --
+          // zero instructions retired.
           if (boot_fault && err_pin && !boot_done && retire_count == 0)
             $display("[TB] PASS corrupt-image: fault latched, err_pin high, 0 retires after %0d cycles", cycle);
           else

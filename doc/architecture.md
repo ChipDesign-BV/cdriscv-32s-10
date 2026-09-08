@@ -115,6 +115,7 @@ corrupt a code word on purpose to prove the detection path works.
 | Windowed watchdog | `cdriscv_wdog` | program flow failure |
 | Clock monitor against a reference clock | `cdriscv_clkmon` | clock loss, frequency drift |
 | Bus error responder | `cdriscv_bus` | access to unmapped addresses |
+| End-to-end (E2E) bus protection on the TCM links | `cdriscv_e2e`, `cdriscv_e2e_link` | payload / address / byte-enable corruption between core and memory, which the TCM ECC cannot see |
 | Range check on ADC results, analog flags | `cdriscv_ams_if` | analog domain failure |
 | Configuration register parity | `cdriscv_cfg_parity`, one per register group | an upset silently disarming or re-tuning any mechanism above |
 | Fault collection and reaction | `cdriscv_safety_ctrl` | reports and reacts |

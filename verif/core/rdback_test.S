@@ -171,6 +171,16 @@ _start:
     li   a0, 30
     bnez t1, fail
 
+    /* STATUS2 (0x2c, read-only QSPI boot telemetry): every simulation
+     * bench builds BootEnable=0, which ties boot_done=1, boot_fault=0
+     * and retries=0, so the register must read exactly 0x2.  This is
+     * the APB-decode check (the read arm otherwise had no test); the
+     * real-value check lives in the boot bench. */
+    lw   t1, 0x2c(s0)
+    li   t2, 0x2
+    li   a0, 31
+    bne  t1, t2, fail
+
     /* ---- memory BIST: read only ----------------------------------- */
     li   s0, MBIST
     lw   t1, 0x00(s0)           /* CTRL is write only, reads as zero */

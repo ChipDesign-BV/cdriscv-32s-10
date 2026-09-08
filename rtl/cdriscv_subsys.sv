@@ -410,6 +410,17 @@ module cdriscv_subsys
 
   logic        f_bus_err_xbar;
 
+  // E2E link wires (declared before the bus, which exports
+  // itcm_owner_o into them; the endpoints themselves sit below)
+  logic        itcm_owner;
+  logic [6:0]  data_wr_chk, instr_wr_chk;
+  logic [6:0]  itcm_rd_chk, dtcm_rd_chk, data_rd_chk;
+  logic        itcm_rd_chk_valid, dtcm_rd_chk_valid, data_rd_chk_valid;
+  logic        instr_resp_itcm, data_resp_itcm, data_resp_dtcm;
+  logic        e2e_itcm_wr_err, e2e_dtcm_wr_err;
+  logic        e2e_instr_rd_err, e2e_data_rd_err;
+  logic        f_e2e;
+
   cdriscv_bus #(
       .ItcmBase   (ItcmBase),
       .ItcmBytes  (ItcmBytes),
@@ -462,8 +473,81 @@ module cdriscv_subsys
       .periph_wdata_o  (periph_wdata),
       .periph_rdata_i  (periph_rdata),
       .periph_err_i    (periph_err),
-      .fault_bus_err_o (f_bus_err_xbar)
+      .fault_bus_err_o (f_bus_err_xbar),
+      .itcm_owner_o    (itcm_owner)
   );
+
+  // ------------------------------------------------------------------
+  // End-to-end bus protection (the two TCM links)
+  // ------------------------------------------------------------------
+  // The TCMs' internal ECC covers the arrays; what it cannot see is the
+  // path -- address decode, bus muxing, the interconnect.  The E2E
+  // endpoints (cdriscv_e2e_link) close that: check bits over
+  // {payload, byte address, byte enables} travel beside each TCM
+  // request and response, generated at one end and checked at the
+  // other, so a corrupted payload, a wrong-address delivery OR a
+  // byte-enable flip flags as FLT_E2E.
+  //
+  // Scope is deliberately the two TCM links only: a wrong-address
+  // delivery into a memory is silent and fatal, while the peripheral
+  // bridge answers for itself through err_o (unmapped offsets and
+  // rejected accesses error back to the core), so that link is out of
+  // this pass's scope.
+  //
+  // A write-path mismatch does not gate the write -- that would change
+  // bus timing -- the access completes and the fault latches in the
+  // safety controller.  Sub-word writes are covered too: the check is
+  // made on the delivered request wires, before the TCM's internal
+  // read-modify-write.  The byte enables are in the fold as well: each
+  // endpoint folds the be of the access it saw, the instruction master
+  // the constant 4'b1111 the bus drives for a fetch.
+  // Response attribution, from the bus's own owner tracking (exported,
+  // not duplicated).  The D-TCM only ever answers the data master; the
+  // I-TCM answer routes on the owner bit, mirroring the bus's response
+  // priority.
+  assign instr_resp_itcm = itcm_rvalid && !itcm_owner;
+  assign data_resp_itcm  = itcm_rvalid &&  itcm_owner;
+  assign data_resp_dtcm  = dtcm_rvalid && !data_resp_itcm;
+
+  assign data_rd_chk       = data_resp_itcm ? itcm_rd_chk       : dtcm_rd_chk;
+  assign data_rd_chk_valid = data_resp_itcm ? itcm_rd_chk_valid : dtcm_rd_chk_valid;
+
+  cdriscv_e2e_link_m u_e2e_instr (
+      .clk_i          (clk_i),
+      .rst_ni         (core_rst_n),
+      .gnt_i          (instr_gnt),
+      .we_i           (1'b0),            // read-only master
+      .be_i           (4'b1111),         // what the bus drives for a fetch
+      .addr_i         (instr_addr),
+      .wdata_i        (32'b0),
+      .rvalid_i       (instr_rvalid),
+      .rdata_i        (instr_rdata),
+      .resp_prot_i    (instr_resp_itcm),
+      .rd_chk_i       (itcm_rd_chk),
+      .rd_chk_valid_i (itcm_rd_chk_valid),
+      .wr_chk_o       (instr_wr_chk),    // unused: this master never writes
+      .rd_err_o       (e2e_instr_rd_err)
+  );
+
+  cdriscv_e2e_link_m u_e2e_data (
+      .clk_i          (clk_i),
+      .rst_ni         (core_rst_n),
+      .gnt_i          (data_gnt),
+      .we_i           (data_we),
+      .be_i           (data_be),
+      .addr_i         (data_addr),
+      .wdata_i        (data_wdata),
+      .rvalid_i       (data_rvalid),
+      .rdata_i        (data_rdata),
+      .resp_prot_i    (data_resp_itcm || data_resp_dtcm),
+      .rd_chk_i       (data_rd_chk),
+      .rd_chk_valid_i (data_rd_chk_valid),
+      .wr_chk_o       (data_wr_chk),
+      .rd_err_o       (e2e_data_rd_err)
+  );
+
+  assign f_e2e = e2e_itcm_wr_err || e2e_dtcm_wr_err ||
+                 e2e_instr_rd_err || e2e_data_rd_err;
 
   // ------------------------------------------------------------------
   // Tightly coupled memories
@@ -535,6 +619,46 @@ module cdriscv_subsys
       .bist_rdata_o (dbist_rdata)
   );
 
+  // ---- E2E slave endpoints, on the wires just before each TCM ------
+  //
+  // Same reset as the TCM they sit beside (rst_n_sync, not core_rst_n)
+  // so their held-address state stays coherent with the memory across a
+  // warm reset.  A response draining through a warm reset is ignored at
+  // the master side, whose endpoint is in reset with the bus.
+  cdriscv_e2e_link_s u_e2e_itcm (
+      .clk_i          (clk_i),
+      .rst_ni         (rst_n_sync),
+      .req_i          (itcm_req),
+      .gnt_i          (itcm_gnt),
+      .we_i           (itcm_we),
+      .be_i           (itcm_be),
+      .addr_i         (itcm_addr),
+      .wdata_i        (itcm_wdata),
+      .rvalid_i       (itcm_rvalid),
+      .rdata_i        (itcm_rdata),
+      .wr_chk_i       (data_wr_chk),     // only the data master can write
+      .wr_err_o       (e2e_itcm_wr_err),
+      .rd_chk_o       (itcm_rd_chk),
+      .rd_chk_valid_o (itcm_rd_chk_valid)
+  );
+
+  cdriscv_e2e_link_s u_e2e_dtcm (
+      .clk_i          (clk_i),
+      .rst_ni         (rst_n_sync),
+      .req_i          (dtcm_req),
+      .gnt_i          (dtcm_gnt),
+      .we_i           (dtcm_we),
+      .be_i           (dtcm_be),
+      .addr_i         (dtcm_addr),
+      .wdata_i        (dtcm_wdata),
+      .rvalid_i       (dtcm_rvalid),
+      .rdata_i        (dtcm_rdata),
+      .wr_chk_i       (data_wr_chk),
+      .wr_err_o       (e2e_dtcm_wr_err),
+      .rd_chk_o       (dtcm_rd_chk),
+      .rd_chk_valid_o (dtcm_rd_chk_valid)
+  );
+
   // ------------------------------------------------------------------
   // APB bridge and peripherals
   // ------------------------------------------------------------------
@@ -596,6 +720,9 @@ module cdriscv_subsys
       .reset_req_o    (sfty_reset_req),
       .err_pin_o      (err_pin_o),
       .fault_any_o    (fault_any_o),
+      .boot_done_i    (boot_done),
+      .boot_fault_i   (boot_fault),
+      .boot_retries_i (boot_retries),
       .inj_lockstep_o (inj_lockstep),
       .inj_itcm_en_o  (inj_itcm_en),
       .inj_dtcm_en_o  (inj_dtcm_en),
@@ -831,18 +958,12 @@ module cdriscv_subsys
     fault_int[FLT_AMS]           = ams_fault;
     fault_int[FLT_SW]            = f_sw;
     fault_int[FLT_CORE_TRAP]     = f_illegal;
-    // POST-SIGNOFF: sticky loader fault, routed like every other
-    // internal source (bit 14 was spare).  The safety controller's
-    // reset defaults (ENABLE/REACT_PIN all ones, CTRL.enable set)
-    // guarantee a cold-boot failure latches into STATUS and asserts
-    // err_pin_o with no software involved -- there IS no software on a
-    // failed boot.  Constant 0 when BootEnable=0.
-    fault_int[FLT_BOOT]          = boot_fault;
+    fault_int[FLT_E2E]           = f_e2e;
   end
 
   assign reset_req = sfty_reset_req || wdog_reset_req;
 
   logic unused_sigs;
-  assign unused_sigs = |{f_out_en, pstrb, boot_retries};
+  assign unused_sigs = |{f_out_en, pstrb, instr_wr_chk};
 
 endmodule

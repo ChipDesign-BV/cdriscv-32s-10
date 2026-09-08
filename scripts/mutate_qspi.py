@@ -37,13 +37,15 @@ What each mutant proves the benches can see:
 * timeout-dropped: the progress watchdog can never fire, so a bus that
   stops granting hangs the loader for ever.  Scenario 8 (gnt withheld)
   requires a bounded fault, and its wait is finite.
-* flt-boot-not-routed (cdriscv-32s-10 specific): fault_int[FLT_BOOT]
-  is severed in cdriscv_subsys, so a failed boot never reaches the
-  safety controller and err_pin stays low.  bootsim-fault requires
-  err_pin high after a corrupt image.  (cdriscv-32s-20 surfaced
-  boot_fault as an ungated err_pin OR plus a STATUS2 register; this
-  variant had FLT bit 14 spare, so the routing goes the normal way and
-  this is the mutant that guards it.)
+* boot-fault-not-on-pin: the safety controller's ungated boot_fault
+  term is removed from err_pin_o, so a failed boot never reaches the
+  error pin.  bootsim-fault requires err_pin high after a corrupt
+  image.  (boot_fault reaches the pin through this dedicated ungated
+  port -- it deliberately does NOT latch into the sticky status --
+  matching cdriscv-32s-20.)
+* status2-zeroed: the safety controller's STATUS2 (0x2c) decode returns
+  zero instead of the boot telemetry.  rdback_test.S reads 0x2c and
+  requires 0x2 (boot_done=1, BootEnable=0), so the read arm is covered.
 
 A surviving mutant is a claim about the bench, so first be sure the
 mutant is a real change (the anchor must be unique in the file).
@@ -51,14 +53,16 @@ mutant is a real change (the anchor must be unique in the file).
 import subprocess, sys, os
 
 BOOT = 'rtl/boot/cdriscv_qspi_boot.sv'
-SUBSYS = 'rtl/cdriscv_subsys.sv'
 
 MUTANTS = [
- (SUBSYS,
-  "    fault_int[FLT_BOOT]          = boot_fault;",
-  "    fault_int[FLT_BOOT]          = 1'b0;",
-  "boot fault not routed into the safety controller (FLT_BOOT severed)",
-  "bootsim-fault"),
+ ("rtl/safety/cdriscv_safety_ctrl.sv",
+  "assign err_pin_o = (pin_value ^ pin_inv_q) | boot_fault_i;",
+  "assign err_pin_o = (pin_value ^ pin_inv_q);",
+  "boot fault does not reach the error pin", "bootsim-fault"),
+ ("rtl/safety/cdriscv_safety_ctrl.sv",
+  "8'h2c:   prdata_o = {26'b0, boot_retries_i, boot_done_i, boot_fault_i};",
+  "8'h2c:   prdata_o = 32'b0;",
+  "boot: STATUS2 decode returns zeros", "rdback"),
  (BOOT, "      ((state_q == S_CRC) && (crc_calc_w != hdr_crc_w)) ||\n",
         "",
         "boot: CRC check ignored (verdict term deleted from fail_w)"),

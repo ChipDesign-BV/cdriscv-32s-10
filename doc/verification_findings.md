@@ -5,6 +5,58 @@ first. Each finding records what was wrong, how it was found, and what
 was done about it. See `verification_plan.md` for the plan these come
 from.
 
+## Phase V54 — end-to-end bus protection added, loader fault reworked, V52 signoff re-opened (2026-09-08)
+
+End-to-end (E2E) bus protection was ported from `cdriscv-32s-20` and
+made **always-on**, matching that variant exactly. This is a deliberate
+architectural change, decided with the owner, that **re-opens the V52
+signoff**: E2E adds hardware unconditionally, so the V52 GDS and the
+O1–O9 objective numbers — all produced on the pre-E2E RTL — no longer
+describe the current design.
+
+**What E2E is.** Check bits over {payload, byte address, byte enables}
+are generated at a master endpoint and checked at a slave endpoint on
+each of the two TCM links (`cdriscv_e2e` gen/chk, `cdriscv_e2e_link`
+master/slave). It closes the gap the TCM ECC cannot see — the path
+between core and memory: address decode, bus muxing, the interconnect —
+so a corrupted payload, a wrong-address delivery or a byte-enable flip
+latches `FLT_E2E`. Response attribution uses the bus's exported
+`itcm_owner_o` (a pure export of the existing owner flop). A write-path
+mismatch does not gate the write, so bus timing is unchanged.
+
+**Fault-map change, matching v2.** Bit 14 was `FLT_BOOT` (the loader);
+it is now `FLT_E2E`. The loader's `boot_fault` moved off the fault
+vector onto a dedicated safety-controller port, OR-ed **ungated** into
+`err_pin_o` (`err_pin_o = (pin_value ^ pin_inv_q) | boot_fault_i`), with
+its telemetry in the now-real `STATUS2` register at `0x2c`. **This
+fixed two latent defects in the V53 loader**: v1's safety controller
+ungated only bit 13, so `boot_fault` never actually reached the pin
+ungated; and `STATUS2` had been documented but never implemented
+(`boot_retries_o` was computed and dropped). Both are now real and
+tested.
+
+**Verification on the E2E-inclusive RTL:**
+
+| Check | Result |
+|---|---|
+| `make lint` (BootEnable 0 and 1) | clean, 0 warnings |
+| `make block-e2e` | **PASS — 154 096 checks, 0 false positives** |
+| `make block-e2e-link` | **PASS — 12 024 checks, 0 mismatches** |
+| `make sim` / `make safety` (E2E always-on) | **PASS** — status `0x0` under fault-free TCM traffic, **no spurious `FLT_E2E`** |
+| `make block-qspi` / `bootsim` / `bootsim-fault` | **PASS** — err_pin high via the dedicated ungated port |
+| `rdback` (new `STATUS2` read, reads `0x2` at BootEnable=0) | **PASS** |
+| `scripts/mutate_qspi.py` | **10/10 killed** — incl. the new ungated-err-pin and STATUS2-zeroed mutants |
+
+The key risk — E2E always-on flagging normal traffic — was cleared: the
+endpoint response-attribution and the request-qualification keep idle
+and miss-attributed responses from raising a fault.
+
+**Still pending on this RTL (honest scope):** the full objective suite
+(O2 10⁹ co-sim, O6/O7 coverage, O8 gate-level, O9 FMEDA) and the
+physical signoff were **not** re-run — they remain V52-era, pre-E2E
+numbers. The current RTL is "E2E implemented and block-verified;
+O-gate and signoff re-run pending".
+
 ## Phase V53 — QSPI boot loader backported, signed-off default proven intact (2026-09-08)
 
 The QSPI-master firmware loader, the xschem symbol and the Verilog-A
@@ -22,16 +74,19 @@ hex-backed):
 | `make block-qspi` | **PASS, 41 checks / 10 scenarios** |
 | `make bootsim` (1-bit `03h`) | boot at **12 753** cycles, program PASS, 0 retries |
 | `make bootsim` (quad `EBh`) | boot at **3 897** cycles, program PASS, 0 retries |
-| `make bootsim-fault` (corrupt image) | 3 retries → **sticky fault**, `err_pin` high, safety status **`0x0000_4000`** (bit 14 = `FLT_BOOT`), core never released |
+| `make bootsim-fault` (corrupt image) | 3 retries → **boot_fault** on the safety controller's dedicated ungated port, `err_pin` high, safety status **`0x0000_0000`** (boot_fault does NOT latch into the sticky status), core never released |
 | `scripts/mutate_qspi.py` | **9 / 9 mutants killed** |
 
 The nine killed mutants are the ones that matter: fetch released before
 the CRC verdict, CRC ignored, magic ignored, segment bounds dropped,
 retry cap dropped, non-sticky fault, quad-switch ignoring the header
-flag, watchdog disabled, and `FLT_BOOT` severed from the safety
-controller. `FLT_BOOT` took the spare fault index 14 (this variant has
-no JTAG faults); `err_pin` is ungated because a failed cold boot leaves
-no software to react.
+flag, watchdog disabled, and the safety controller's ungated
+`boot_fault` term removed from `err_pin`. Fault index 14 is now
+`FLT_E2E` (end-to-end bus protection); `boot_fault` no longer occupies
+a fault bit — it reaches `err_pin` ungated through a dedicated
+safety-controller port (and is read back in STATUS2 at `0x2c`), because
+a failed cold boot leaves no software to react and nothing to clear a
+sticky status.
 
 **The default (`BootEnable=0`) is the signed-off design, and this is
 proved, not asserted.** The loader lives in a generate block that is

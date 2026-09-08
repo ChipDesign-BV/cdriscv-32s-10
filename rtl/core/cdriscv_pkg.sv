@@ -175,11 +175,11 @@ package cdriscv_pkg;
   localparam int unsigned FLT_CFG_PAR     = 13;  // configuration register parity
                                                  // error -- latched UNGATED, see
                                                  // cdriscv_safety_ctrl
-  localparam int unsigned FLT_BOOT         = 14;  // QSPI boot loader failure
-                                                 // (was FLT_SPARE14; POST-SIGNOFF
-                                                 // addition -- constant 0 when the
-                                                 // subsystem's BootEnable=0, which
-                                                 // is the default)
+  localparam int unsigned FLT_E2E          = 14;  // end-to-end bus protection:
+                                                 // payload/address mismatch on a
+                                                 // TCM link (was the spare bit --
+                                                 // taking it appends nothing and
+                                                 // moves nothing)
   localparam int unsigned FLT_SELFTEST     = 15;  // fault-injection self test
 
   // ------------------------------------------------------------------

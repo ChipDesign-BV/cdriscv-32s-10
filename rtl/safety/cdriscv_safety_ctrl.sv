@@ -84,6 +84,12 @@ module cdriscv_safety_ctrl
     // reactions
     output logic        irq_o,
     output logic        reset_req_o,
+    // Boot loader status (quasi-static after boot; boot_fault_i is the
+    // one input that matters when no software can run -- see err_pin).
+    input  logic        boot_done_i,
+    input  logic        boot_fault_i,
+    input  logic [3:0]  boot_retries_i,
+
     output logic        err_pin_o,
     output logic        fault_any_o,
 
@@ -255,7 +261,12 @@ module cdriscv_safety_ctrl
 
   logic pin_value;
   assign pin_value = pin_tog_q ? pin_tog_q_state : pin_fault;
-  assign err_pin_o = pin_value ^ pin_inv_q;
+  // boot_fault reaches the pin UNGATED, like configuration parity, and
+  // for a stronger reason: a failed boot means no software EXISTS to
+  // configure a reaction or read a status register.  The pin is the
+  // only voice the chip has.  (STATUS2 exists for the successful-boot
+  // telemetry case, not this one.)
+  assign err_pin_o = (pin_value ^ pin_inv_q) | boot_fault_i;
 
   // ------------------------------------------------------------------
   // Self test outputs
@@ -286,6 +297,14 @@ module cdriscv_safety_ctrl
         8'h1c:   prdata_o = {16'b0, pin_div_q};
         8'h20:   prdata_o = fault_raw;
         8'h28:   prdata_o = {25'b0, cfg_src_q};
+        // STATUS2: boot telemetry, appended register (0x2c), read-only.
+        // [0] boot_fault (readable only after a warm restart -- a cold
+        //     boot that faulted never releases the core)
+        // [1] boot_done
+        // [5:2] retry count of the load that produced this session --
+        //     nonzero after a successful boot = a flash that is dying
+        //     in the field, caught before it kills the unit
+        8'h2c:   prdata_o = {26'b0, boot_retries_i, boot_done_i, boot_fault_i};
         default: prdata_o = 32'b0;
       endcase
     end

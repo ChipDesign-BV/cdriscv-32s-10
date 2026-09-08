@@ -504,25 +504,44 @@ always read with the universal 1-bit `03h` command, with a
 header-gated switch to quad `EBh` for the bulk. A bad image or a flash
 time-out retries the whole load (`BootRetryMax`, default 3) and then
 latches a **sticky** fault: the core never starts on an unverified
-image, and `err_pin_o` asserts directly (safety status bit 14,
-`STATUS2` telemetry at safety-controller `0x2c`). Pack an image with
-`scripts/mkbootimg.py`.
+image, and `err_pin_o` asserts directly. `boot_fault` reaches the
+safety controller on a dedicated port and is OR-ed ungated into the
+error pin (it takes no `STATUS` bit); its telemetry is `STATUS2` at
+safety-controller `0x2c`. Pack an image with `scripts/mkbootimg.py`.
 
-**This facility is off by default and its default state is bit-identical
-to the signed-off design.** `BootEnable` defaults to `0`, at which the
-loader sits in an un-elaborated generate block — a `verilator` dump of
-the elaborated design contains zero references to it — `boot_done` ties
-to 1 so the fetch enable reduces to its signed-off expression, the 2:1
-bus mux collapses to a plain wire, and the five QSPI ports tie to
-constants. The reference hardening wrapper
+**This facility is off by default.** `BootEnable` defaults to `0`, at
+which the loader sits in an un-elaborated generate block — a
+`verilator` dump of the elaborated design contains zero references to
+it — `boot_done` ties to 1 so the fetch enable reduces to its former
+expression, the 2:1 bus mux collapses to a plain wire, and the five
+QSPI ports tie to constants. The reference hardening wrapper
 (`flow/cdriscv_subsys_hard.sv`) leaves `BootEnable` at 0 with those
-ports tied off, so its port list and netlist are unchanged from the
-2026-08-24 signoff. **Enabling flash boot (`BootEnable=1`) is a new
+ports tied off. **Enabling flash boot (`BootEnable=1`) is a new
 chip configuration that must be re-verified and re-hardened** — it is
 the configuration built by the full-chip pad ring (`doc/chip.md`),
 which routes the QSPI ports to pads. With the default `BootEnable=0`,
 preload the TCMs externally exactly as before (BIST-then-load, or a
 bench `$readmemh`); the boot sequence in §5 is unchanged.
+
+> Note: the loader still folds away completely at `BootEnable=0`, but
+> the subsystem is **no longer bit-identical to the 2026-08-24 (V52)
+> signoff** regardless of `BootEnable` — the always-on E2E protection
+> (§9.5) was added afterward. The V52 GDS describes the pre-E2E design.
+
+### 9.5 End-to-end bus protection (E2E, always on)
+
+The two TCM links carry E2E check bits over {payload, byte address,
+byte enables}, generated at the master endpoint and checked at the
+slave endpoint (`cdriscv_e2e`, `cdriscv_e2e_link`), so a corrupted
+payload, a wrong-address delivery or a byte-enable flip on the path the
+TCM ECC cannot see is caught and latches `FLT_E2E` (safety status bit
+14). It is **always on** — no parameter, no ports, transparent to
+integration — and a write-path mismatch does not gate the write, so bus
+timing is unchanged. It was added 2026-09-08, **after** the V52 signoff
+and the O1–O9 objective run: E2E is block/safety/smoke-verified, but the
+full objective suite and the physical signoff have not been re-run on
+the E2E-inclusive RTL (see `verification_findings.md` V54 and
+`safety_manual.md` §5).
 
 ## 10. Verifying your integration
 
@@ -549,7 +568,7 @@ path).
 |------|----------|
 | `rtl/cdriscv_files.f` | read order for Verilator, iverilog and yosys |
 | `rtl/core/` | core |
-| `rtl/safety/` | lockstep, ECC, safety controller, watchdog, clock monitor, BIST |
+| `rtl/safety/` | lockstep, ECC, safety controller, watchdog, clock monitor, BIST, end-to-end bus protection |
 | `rtl/bus/` | interconnect, TCM, APB bridge |
 | `rtl/periph/` | timer, interrupt controller, AMS interface |
 | `rtl/common/` | synchronisers, configuration parity, 64-bit counters |

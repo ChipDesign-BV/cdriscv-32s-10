@@ -85,7 +85,13 @@ module cdriscv_bus #(
     input  logic        periph_err_i,
 
     // safety
-    output logic        fault_bus_err_o
+    output logic        fault_bus_err_o,
+
+    // E2E observation: which master owns the I-TCM response in flight
+    // (0 = instruction, 1 = data).  Pure export of the existing owner
+    // tracking so the E2E link endpoints can attribute responses; no
+    // logic is added here -- see cdriscv_e2e_link.
+    output logic        itcm_owner_o
 );
 
   // ------------------------------------------------------------------
@@ -228,6 +234,8 @@ module cdriscv_bus #(
 
   assign fault_bus_err_o = (instr_rvalid_o && instr_err_o) ||
                            (data_rvalid_o  && data_err_o);
+
+  assign itcm_owner_o = itcm_owner_q;
 
   logic unused_pending;
   assign unused_pending = itcm_pending_q;

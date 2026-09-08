@@ -17,6 +17,12 @@
 // ---------------------------------------------------------------------
 lint_off -rule DECLFILENAME -file "*cdriscv_sync.sv"
 lint_off -rule DECLFILENAME -file "*cdriscv_ecc_secded.sv"
+// cdriscv_e2e.sv holds the generator and the checker: they are
+// the two halves of one E2E primitive and belong in one file.
+lint_off -rule DECLFILENAME -file "*cdriscv_e2e.sv"
+// cdriscv_e2e_link.sv holds the master- and slave-side link
+// endpoints: one protected link's two ends, kept together.
+lint_off -rule DECLFILENAME -file "*cdriscv_e2e_link.sv"
 
 // ---------------------------------------------------------------------
 // SYNCASYNCNET -- cdriscv_rst_sync is the reset synchroniser itself:

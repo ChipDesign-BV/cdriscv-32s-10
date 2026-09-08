@@ -19,6 +19,8 @@ rtl/safety/cdriscv_safety_ctrl.sv
 rtl/safety/cdriscv_wdog.sv
 rtl/safety/cdriscv_clkmon.sv
 rtl/safety/cdriscv_mbist.sv
+rtl/safety/cdriscv_e2e.sv
+rtl/safety/cdriscv_e2e_link.sv
 rtl/bus/cdriscv_tcm.sv
 rtl/bus/cdriscv_bus.sv
 rtl/bus/cdriscv_apb_bridge.sv

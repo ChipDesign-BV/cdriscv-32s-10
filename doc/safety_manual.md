@@ -52,6 +52,8 @@ could take over.
 | SM8 | ADC result range check, conversion time-out, analog flag inputs | failure of the analog domain | fault bit 10 |
 | SM9 | Trap reporting to the safety controller | unexpected illegal instruction | fault bit 12 |
 | SM10 | Fault injection (`SELFTEST`, TCM injection, comparator injection) | latent faults in SM1 and SM2 themselves | proves the detection path |
+| SM11 | End-to-end (E2E) bus protection on the two TCM links | corruption the TCM ECC cannot see — the path between core and memory: address decode, bus muxing, the interconnect. Check bits over {payload, byte address, byte enables} are generated at one endpoint and checked at the other, so a corrupted payload, a wrong-address delivery or a byte-enable flip is caught | fault bit 14 (`FLT_E2E`) |
+| | *note*: always on (no parameter). A write-path mismatch does not gate the write — the access completes and the fault latches — so bus timing is unchanged. Scope is the TCM links only; the peripheral bridge answers for itself through its error response (SM7). Added 2026-09-08; see the signoff note in §5 | | |
 
 ## 3. Assumptions of use
 
@@ -117,6 +119,16 @@ FMEDA that closes O9 runs under **assumed** failure rates, and the gaps
 below — chief among them the foundry FIT data, a mission profile and
 common-cause analysis the FMEDA still needs — are what stand between
 "measured" and "qualified".
+
+> **E2E (SM11) was added after that objective run and the V52 signoff
+> (2026-09-08).** The O1–O9 results, the coverage/fault-injection/FMEDA
+> numbers, and the V52 GDS all describe the design *without* E2E. E2E is
+> functionally verified at block, safety and smoke level (its two block
+> benches, `make sim`/`make safety` clean with it always-on, mutation
+> 10/10), but the **full objective suite and the physical signoff have
+> not been re-run on the E2E-inclusive RTL**. Treat the current RTL as
+> "E2E implemented and block-verified; O-gate and signoff re-run
+> pending". See finding V54.
 
 * The FMEDA exists ([fmeda.md](fmeda.md)): SPFM 99.6 %, LFM 91.4 %,
   residual 0.87 FIT — **under assumed failure rates**. The gap that
@@ -198,8 +210,10 @@ common-cause analysis the FMEDA still needs — are what stand between
 * The optional QSPI boot loader (`BootEnable=1`) is **not part of the
   signed-off configuration or the current FMEDA scope.** In the default
   `BootEnable=0` build it is not present. When built it adds one fault
-  source — safety-controller bit 14, ungated on the error pin, raised
-  on an unverified image so the core never starts — but its diagnostic
+  source — `boot_fault`, delivered to the safety controller on a
+  dedicated port and OR-ed ungated into the error pin (it does not take
+  a `STATUS` bit; its telemetry is `STATUS2` at `0x2c`), raised on an
+  unverified image so the core never starts — but its diagnostic
   coverage and failure rate have not been folded into
   [fmeda.md](fmeda.md); a build that enables it must extend the FMEDA
   and re-verify. The loader's own functional verification (block bench,

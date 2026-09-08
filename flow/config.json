@@ -22,6 +22,8 @@
     "dir::../rtl/safety/cdriscv_wdog.sv",
     "dir::../rtl/safety/cdriscv_clkmon.sv",
     "dir::../rtl/safety/cdriscv_mbist.sv",
+    "dir::../rtl/safety/cdriscv_e2e.sv",
+    "dir::../rtl/safety/cdriscv_e2e_link.sv",
     "dir::../verif/gate/cdriscv_tcm_macro.sv",
     "dir::../rtl/bus/cdriscv_bus.sv",
     "dir::../rtl/bus/cdriscv_apb_bridge.sv",

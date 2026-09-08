@@ -105,7 +105,7 @@ either detected by a mechanism that reports it, or bounded by one.
 | Path | Contents |
 |------|----------|
 | [rtl/core/](rtl/core/) | core: fetch, decode, ALU, multiply/divide, LSU, CSR, register file |
-| [rtl/safety/](rtl/safety/) | lockstep, SEC-DED, safety controller, watchdog, clock monitor, memory BIST |
+| [rtl/safety/](rtl/safety/) | lockstep, SEC-DED, safety controller, watchdog, clock monitor, memory BIST, end-to-end bus protection |
 | [rtl/bus/](rtl/bus/) | interconnect, TCM, APB bridge |
 | [rtl/periph/](rtl/periph/) | timer, interrupt controller, AMS interface |
 | [rtl/common/](rtl/common/) | clock domain crossing primitives |
@@ -243,7 +243,7 @@ Every objective of [doc/verification_plan.md](doc/verification_plan.md)
 has a result. The banner above audits the gate; the detail and every
 number's provenance live in
 [doc/verification_findings.md](doc/verification_findings.md) (phases
-V0–V52, newest first). Summary, one line per area:
+V0–V54, newest first). Summary, one line per area:
 
 | Area | State | Evidence |
 |------|-------|----------|
@@ -258,7 +258,16 @@ V0–V52, newest first). Summary, one line per area:
 | Gate level | **O8 met** | zero-delay netlist cycle-identical to RTL; smoke + 12 architectural tests on the placed netlist with SDF, signatures bit-exact vs Spike (V42/V43); `make gate gate-sdf gate-arch` |
 | FMEDA | **SPFM 99.6 % / LFM 91.4 %** | under stated assumed failure rates — see [doc/fmeda.md](doc/fmeda.md) for what is measured vs assumed (V44); `scripts/fmeda.py` |
 | CI | **green** | [verify.yml](.github/workflows/verify.yml): full gate on every push, gate-level/timing/fault-injection nightly |
-| QSPI boot loader (optional) | **verified, off by default** | block bench 41 checks, end-to-end boot 1-bit + quad, corrupt-image sticky-fault path, mutation 9/9 (V53); `make block-qspi bootsim bootsim-fault`. `BootEnable=0` proven to leave the signed-off design intact — it is **not** part of the V52 signoff |
+| QSPI boot loader (optional) | **verified, off by default** | block bench 41 checks, end-to-end boot 1-bit + quad, corrupt-image sticky-fault path, mutation 10/10 (V53/V54); `make block-qspi bootsim bootsim-fault`. `BootEnable=0` folds it away completely |
+| E2E bus protection (always-on) | **block-verified (V54)** | check bits over {payload, address, byte-enables} on both TCM links; `make block-e2e` 154 096 checks / `block-e2e-link` 12 024 checks, `make sim`/`safety` clean with it on. Added after V52 — see the caveat below |
+
+> **The Timing (V52) and objective (O1–O9) rows above describe the
+> design *before* E2E.** E2E (V54, always-on) was added 2026-09-08 and
+> re-opens that signoff: it is block/safety/smoke-verified, but the full
+> objective suite (O2 co-sim, O6/O7 coverage, O8 gate-level, O9 FMEDA)
+> and the physical signoff have **not** been re-run on the E2E-inclusive
+> RTL. Treat those rows as "valid for the pre-E2E configuration;
+> re-run pending for the current RTL".
 
 Twelve functional defects and two flow defects were found and fixed on
 the way; four tool defects were reported upstream. The wrong guesses

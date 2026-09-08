@@ -36,7 +36,7 @@ OBJDUMP    := $(CROSS)objdump
 ARCH       := rv32im_zicsr_zifencei
 ABI        := ilp32
 
-.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi cosim cosim-iverilog cosim-stall cosim-random
+.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-e2e block-e2e-link block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi cosim cosim-iverilog cosim-stall cosim-random
 
 all: lint
 
@@ -125,10 +125,10 @@ bootsim: $(BUILD)/tb_cdriscv_boot.vvp $(BUILD)/boot_flash.hex $(BUILD)/boot_flas
 	  | tee $(BUILD)/bootsim_quad.log
 	@grep -q "\[TB\] PASS" $(BUILD)/bootsim_quad.log
 
-# +CORRUPT flips one payload bit: the loader must retry, latch the
-# sticky fault into the safety controller (FLT_BOOT, bit 14), assert
-# err_pin through the reset-default reactions, and never release the
-# core.
+# +CORRUPT flips one payload bit: the loader must retry, drive
+# boot_fault into the safety controller's dedicated ungated port so
+# err_pin asserts (the fault does not latch into the sticky status),
+# and never release the core.
 bootsim-fault: $(BUILD)/tb_cdriscv_boot.vvp $(BUILD)/boot_flash.hex $(BUILD)/boot_flash_quad.hex
 	$(VVP) $(BUILD)/tb_cdriscv_boot.vvp +FLASH_HEX=$(BUILD)/boot_flash.hex +CORRUPT \
 	  | tee $(BUILD)/bootsim.log
@@ -204,7 +204,23 @@ block-qspi: $(BUILD)/tb_qspi_boot.vvp
 	$(VVP) $< | tee $(BUILD)/block_qspi.log
 	@grep -q "PASS" $(BUILD)/block_qspi.log
 
-block: block-alu block-ecc block-multdiv block-clkmon block-qspi
+$(BUILD)/tb_e2e.vvp: rtl/core/cdriscv_pkg.sv rtl/safety/cdriscv_ecc_secded.sv rtl/safety/cdriscv_e2e.sv verif/block/e2e/tb_e2e.sv | $(BUILD)
+	$(IVERILOG) -g2012 -o $@ -s tb_e2e $^
+
+block-e2e: $(BUILD)/tb_e2e.vvp
+	$(VVP) $< | tee $(BUILD)/block_e2e.log
+	@grep -q "PASS" $(BUILD)/block_e2e.log
+
+# The link bench: the same generator/checker pair built into the two
+# endpoints the subsystem instantiates, attacked over corruptible wires.
+$(BUILD)/tb_e2e_link.vvp: rtl/core/cdriscv_pkg.sv rtl/safety/cdriscv_ecc_secded.sv rtl/safety/cdriscv_e2e.sv rtl/safety/cdriscv_e2e_link.sv verif/block/e2e_link/tb_e2e_link.sv | $(BUILD)
+	$(IVERILOG) -g2012 -o $@ -s tb_e2e_link $^
+
+block-e2e-link: $(BUILD)/tb_e2e_link.vvp
+	$(VVP) $< | tee $(BUILD)/block_e2e_link.log
+	@grep -q "PASS" $(BUILD)/block_e2e_link.log
+
+block: block-alu block-ecc block-multdiv block-clkmon block-qspi block-e2e block-e2e-link
 
 # ------------------------------------------------- core co-simulation
 # Runs one program on Spike and on the RTL and compares the retired

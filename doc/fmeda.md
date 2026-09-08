@@ -105,4 +105,10 @@ in-mission BIST would move it).
 3. Common-cause analysis for the lockstep pair (shared clock, reset,
    voltage) — outside what fault injection can measure.
 4. Credit or discard the start-up self-tests in the permanent-fault DC.
-5. Re-run the script; the tables regenerate.
+5. **Add the end-to-end bus protection (`FLT_E2E`, SM11) to the
+   population.** It was added 2026-09-08, after this FMEDA was run, so
+   the numbers here do not yet credit it — its diagnostic coverage of
+   the core↔TCM path (address/payload/byte-enable corruption the ECC
+   cannot see) is currently unclaimed. See `verification_findings.md`
+   V54.
+6. Re-run the script; the tables regenerate.
