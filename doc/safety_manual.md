@@ -110,11 +110,13 @@ fault on a fetch).
 
 ## 5. Known gaps
 
-These are known and unresolved. As of 2026-08-24 the O1–O7 gate of the
-verification plan is met, so the IP **may be used in a project**; the
-gaps below are the reason it remains **not qualified for
-safety-critical use** — O8–O9 and the FMEDA are the gate for that, and
-they are open.
+These are known and unresolved. Every verification-plan objective
+O1–O9 is met (see `verification_plan.md`), so the IP **may be used in a
+project**. It remains **not qualified for safety-critical use**: the
+FMEDA that closes O9 runs under **assumed** failure rates, and the gaps
+below — chief among them the foundry FIT data, a mission profile and
+common-cause analysis the FMEDA still needs — are what stand between
+"measured" and "qualified".
 
 * The FMEDA exists ([fmeda.md](fmeda.md)): SPFM 99.6 %, LFM 91.4 %,
   residual 0.87 FIT — **under assumed failure rates**. The gap that
@@ -203,6 +205,10 @@ they are open.
   and re-verify. The loader's own functional verification (block bench,
   end-to-end boot, corrupt-image path, mutation) is in
   `verification_findings.md`.
-* Timing constraints, CDC constraints and lint waivers are not written.
-* No verification of any kind has been performed. See
-  `verification_plan.md`.
+* **No formal clock-domain-crossing signoff has been run.** The two
+  crossings (system clock ↔ the independent reference clock) are handled
+  structurally by the two-flop `cdriscv_sync` synchronisers and are
+  exercised by the clock-monitor tests, but no dedicated CDC analysis
+  tool has been run against the design. Timing constraints
+  (`verif/sta/*.sdc`) and the lint waiver file (`verif/lint/waivers.vlt`)
+  do exist and are part of the signed-off flow.
