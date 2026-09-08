@@ -83,6 +83,15 @@ per master, and `rvalid` never in the same cycle as `gnt`.
   it can never be starved by the fetcher,
 * unmapped addresses return an error response rather than hanging.
 
+When the optional QSPI boot loader is built (`BootEnable=1`, off by
+default — see §7 and `integration.md` §9.4), it becomes a temporary
+third data-side master through a 2:1 mux selected by `boot_done`: at
+cold boot it owns the data bus, fills the TCMs from external SPI-NOR,
+and hands the bus back to the core once its CRC32 check passes. With
+the default `BootEnable=0` the loader is not elaborated, the mux
+collapses to a wire, and the bus is exactly the two-master arrangement
+above — the signed-off configuration.
+
 ## 4. Memories
 
 `cdriscv_tcm` stores 39 bits per word: 32 data bits and 7 check bits of
@@ -163,3 +172,4 @@ why it restarted.
 | `ItcmBase` / `DtcmBase` / `PeriphBase` | 0x0, 0x1000_0000, 0x2000_0000 | address map |
 | `HartId` | 0 | value of `mhartid` |
 | `WarmRstLen` | 16 | length of the warm reset in cycles |
+| `BootEnable` | 0 | instantiate the QSPI boot loader (§3); 0 removes it and preserves the signed-off configuration |

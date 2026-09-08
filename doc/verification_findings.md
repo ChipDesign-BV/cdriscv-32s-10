@@ -5,6 +5,59 @@ first. Each finding records what was wrong, how it was found, and what
 was done about it. See `verification_plan.md` for the plan these come
 from.
 
+## Phase V53 — QSPI boot loader backported, signed-off default proven intact (2026-09-08)
+
+The QSPI-master firmware loader, the xschem symbol and the Verilog-A
+ADC-interface emulator were backported from `cdriscv-32s-20`. The
+subsystem is already signed off (V52), so the governing question was
+not "does the loader work" but "does adding it change the signed-off
+design". Both were answered.
+
+**The loader works (`BootEnable=1`).** Against a new behavioural SPI-NOR
+model (`verif/models/cdriscv_spi_norflash_model.sv`, `03h`/`EBh`,
+hex-backed):
+
+| Check | Result |
+|---|---|
+| `make block-qspi` | **PASS, 41 checks / 10 scenarios** |
+| `make bootsim` (1-bit `03h`) | boot at **12 753** cycles, program PASS, 0 retries |
+| `make bootsim` (quad `EBh`) | boot at **3 897** cycles, program PASS, 0 retries |
+| `make bootsim-fault` (corrupt image) | 3 retries → **sticky fault**, `err_pin` high, safety status **`0x0000_4000`** (bit 14 = `FLT_BOOT`), core never released |
+| `scripts/mutate_qspi.py` | **9 / 9 mutants killed** |
+
+The nine killed mutants are the ones that matter: fetch released before
+the CRC verdict, CRC ignored, magic ignored, segment bounds dropped,
+retry cap dropped, non-sticky fault, quad-switch ignoring the header
+flag, watchdog disabled, and `FLT_BOOT` severed from the safety
+controller. `FLT_BOOT` took the spare fault index 14 (this variant has
+no JTAG faults); `err_pin` is ungated because a failed cold boot leaves
+no software to react.
+
+**The default (`BootEnable=0`) is the signed-off design, and this is
+proved, not asserted.** The loader lives in a generate block that is
+not elaborated at the default:
+
+- A `verilator --json-only` dump of the elaborated design contains **0**
+  references to `cdriscv_qspi_boot` at `BootEnable=0` and **9** at
+  `BootEnable=1` — the block genuinely does not exist in the default.
+- At `BootEnable=0` the `g_boot_off` branch ties `boot_done=1`, so
+  `core_fetch_enable = fetch_enable_i && !mbist_busy && boot_done`
+  reduces to the signed-off expression, and `boot_active=0` collapses
+  the 2:1 data-bus mux to a direct core↔bus wire (both confirmed by
+  inspection and eliminated by constant propagation in synthesis).
+- The reference hardening wrapper (`flow/cdriscv_subsys_hard.sv`) leaves
+  `BootEnable` at 0 with the five QSPI ports tied off, so the hardened
+  top's port list and netlist are unchanged from the V52 signoff run.
+- `make lint` is clean at **both** `BootEnable=0` and `=1`; the core
+  regression (`make sim`) passes at the default.
+
+The frozen V52 GDS is a built artefact and is untouched. Enabling flash
+boot is therefore a *new* chip configuration — the one the full-chip pad
+ring builds (`doc/chip.md`) — and it carries its own re-verification and
+re-harden obligation, recorded in `safety_manual.md` §5 and
+`integration.md` §9.4. **A post-signoff addition that cannot be shown to
+vanish at its default is a regression; this one was shown to vanish.**
+
 ## Phase V52 — 25 MHz signed off on 3.353 mm², and the density floor bracketed (2026-08-29)
 
 The main configuration completed the full flow. **1330 × 2521 µm at 25 MHz, every

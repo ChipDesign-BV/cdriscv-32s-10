@@ -60,6 +60,7 @@ available in the execute stage.
 | `0x20` | `RAW` | RO | fault inputs before the sticky stage |
 | `0x24` | `SELFTEST` | WO | [0] lockstep mismatch [1] single bit ECC error [2] double bit ECC error [3] ECC target: 0 = D-TCM, 1 = I-TCM |
 | `0x28` | `CFG_SRC` | RO | which register group raised the configuration parity fault (STATUS bit 13): [0] safety controller [1] watchdog [2] clock monitor [3] interrupt controller [4] timer [5] AMS [6] core `mtvec`. Sticky; cleared by the W1C of STATUS bit 13 |
+| `0x2c` | `STATUS2` | RO | QSPI boot telemetry: [0] `boot_fault` (readable only after a warm restart -- a cold boot that faulted never releases the core, so the **ungated error pin** is the live signal for that case), [1] `boot_done`, [5:2] retry count of the load that produced this session. A nonzero retry count after a successful boot means a flash that is beginning to fail in the field, caught before it kills the unit. Present only in a `BootEnable=1` build; reads `0` in the signed-off default configuration |
 
 **STATUS bit 13 (configuration parity) is special: it latches and
 reacts unconditionally.** Every configuration register group in the
@@ -71,6 +72,14 @@ have corrupted the reaction configuration is not left asking that same
 configuration for permission to report (findings V29/V30, fix V37).
 `REACT_RST` applies normally: whether a configuration upset warrants a
 reset is policy, and stays configurable.
+
+**STATUS bit 14 (QSPI boot loader failure) is likewise ungated on the
+error pin**, for a stronger reason than bit 13: a failed cold boot means
+no verified firmware ever ran, so there is no software to configure a
+reaction or even to read `STATUS2`. The pin is asserted directly by the
+loader's sticky-fault latch. Bit 14 exists only in a `BootEnable=1`
+build (§ boot loader in `integration.md`); it is tied `0` in the
+signed-off default and cannot be raised there.
 
 Writing `SELFTEST[1]` or `[2]` *arms* the corruption; the selected TCM
 applies it to its next write and disarms itself. It cannot work any
@@ -97,7 +106,7 @@ Fault bit assignment (`STATUS`, `ENABLE`, `REACT_*`, `RAW`):
 | 11 | software signalled fault (`msafectrl[1]`) |
 | 12 | unexpected core exception (illegal instruction) |
 | 13 | configuration register parity error (ungated -- see above) |
-| 14 | spare |
+| 14 | QSPI boot loader failure (ungated on the error pin -- see below) |
 | 15 | fault injection self test |
 | 16..31 | `fault_ext_i[15:0]` from the SoC |
 

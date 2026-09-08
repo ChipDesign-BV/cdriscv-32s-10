@@ -193,6 +193,16 @@ they are open.
 * The bus interconnect is not protected: address and data are unprotected
   between the core and the memories; only the memory contents are covered.
 * No end-to-end protection of the ADC data path beyond the range check.
+* The optional QSPI boot loader (`BootEnable=1`) is **not part of the
+  signed-off configuration or the current FMEDA scope.** In the default
+  `BootEnable=0` build it is not present. When built it adds one fault
+  source — safety-controller bit 14, ungated on the error pin, raised
+  on an unverified image so the core never starts — but its diagnostic
+  coverage and failure rate have not been folded into
+  [fmeda.md](fmeda.md); a build that enables it must extend the FMEDA
+  and re-verify. The loader's own functional verification (block bench,
+  end-to-end boot, corrupt-image path, mutation) is in
+  `verification_findings.md`.
 * Timing constraints, CDC constraints and lint waivers are not written.
 * No verification of any kind has been performed. See
   `verification_plan.md`.

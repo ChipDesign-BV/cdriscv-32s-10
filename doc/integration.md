@@ -71,6 +71,9 @@ Work top to bottom; each item names the section that explains it.
 | `ext_p*` | in/out | | APB3 expansion port, peripheral slot 15 |
 | `core_sleep_o` | out | 1 | core is in WFI |
 | `retire_valid_o`, `retire_pc_o`, `retire_instr_o` | out | 1, 32, 32 | retire trace, for debug and for an external monitor |
+| `qspi_sclk_o` | out | 1 | QSPI boot flash clock (`BootEnable=1`; with the default `BootEnable=0` the loader is absent and this pin is inert) |
+| `qspi_cs_no` | out | 1 | QSPI chip select, active low |
+| `qspi_io_i` / `qspi_io_o` / `qspi_io_oe_o` | in/out/out | 4 each | QSPI data — the three buses map onto four bidirectional pads at chip level (`io_o` drives the pad while the matching `io_oe` bit is set) |
 
 ## 2. Clocking
 
@@ -121,7 +124,10 @@ what makes the check bits testable.
    follows it. An unwritten word is an arbitrary code word, and the ECC
    check on it will most likely report an uncorrectable error. If the
    BIST is skipped, the loader must write every TCM word instead.
-2. Load or verify the application image in the I-TCM.
+2. Load or verify the application image in the I-TCM. In a
+   `BootEnable=1` build (§9.4) the hardware QSPI loader has already done
+   this from external flash and will not have released fetch otherwise,
+   so software finds the image already present.
 3. Zero all architectural registers before enabling the lockstep
    comparison (the example in `tb/sw/start.S` does this) so that the two
    cores start from the same state.
@@ -197,6 +203,8 @@ commercial elaborator. In LibreLane set `USE_SLANG: true`; the flow in
 | `RfParity` | 1 | register file parity |
 | `MbistAuto` | 0 | run BIST automatically out of reset |
 | `WarmRstLen` | — | warm reset duration in cycles |
+| `BootEnable` | **0** | instantiate the QSPI boot loader; the default 0 removes it entirely and preloads the TCMs externally (§9.4) |
+| `BootSclkDiv`, `BootRetryMax`, `BootTimeoutCycles`, `BootQuadDummy` | 2, 3, 1024, 4 | loader tuning, effective only when `BootEnable=1` |
 
 Set them at instantiation. Note that a gate-level netlist is one
 *configuration* — parameters are resolved by synthesis — so a bench
@@ -484,6 +492,38 @@ throughput-oriented one.
 By design: the status survives so software can see what happened.
 Software must clear it explicitly after reading.
 
+### 9.4 QSPI boot loader (`BootEnable`, off by default)
+
+The subsystem can load its own firmware from an external SPI-NOR flash
+at cold boot, with no host and no on-die ROM. It is a hardware FSM
+(`rtl/boot/cdriscv_qspi_boot.sv`) that reads a CRC32-checked image from
+flash offset 0 — magic `0xCD10_B007`, two segment descriptors (I-TCM
+and optional D-TCM) — streams it into the TCMs over the normal data
+bus, and releases fetch exactly once the CRC verifies. The header is
+always read with the universal 1-bit `03h` command, with a
+header-gated switch to quad `EBh` for the bulk. A bad image or a flash
+time-out retries the whole load (`BootRetryMax`, default 3) and then
+latches a **sticky** fault: the core never starts on an unverified
+image, and `err_pin_o` asserts directly (safety status bit 14,
+`STATUS2` telemetry at safety-controller `0x2c`). Pack an image with
+`scripts/mkbootimg.py`.
+
+**This facility is off by default and its default state is bit-identical
+to the signed-off design.** `BootEnable` defaults to `0`, at which the
+loader sits in an un-elaborated generate block — a `verilator` dump of
+the elaborated design contains zero references to it — `boot_done` ties
+to 1 so the fetch enable reduces to its signed-off expression, the 2:1
+bus mux collapses to a plain wire, and the five QSPI ports tie to
+constants. The reference hardening wrapper
+(`flow/cdriscv_subsys_hard.sv`) leaves `BootEnable` at 0 with those
+ports tied off, so its port list and netlist are unchanged from the
+2026-08-24 signoff. **Enabling flash boot (`BootEnable=1`) is a new
+chip configuration that must be re-verified and re-hardened** — it is
+the configuration built by the full-chip pad ring (`doc/chip.md`),
+which routes the QSPI ports to pads. With the default `BootEnable=0`,
+preload the TCMs externally exactly as before (BIST-then-load, or a
+bench `$readmemh`); the boot sequence in §5 is unchanged.
+
 ## 10. Verifying your integration
 
 After instantiating, re-run at least:
@@ -498,7 +538,10 @@ make rdback        # every register reads back what it should
 
 If you changed parameters, also `make riscof` (architectural
 conformance) and `make fi` (fault injection) — both are sensitive to
-configuration in ways directed tests are not.
+configuration in ways directed tests are not. For a `BootEnable=1`
+build add `make block-qspi bootsim bootsim-fault` (the loader block
+bench and the end-to-end boot, including the corrupt-image sticky-fault
+path).
 
 ## 11. Files
 
@@ -510,6 +553,12 @@ configuration in ways directed tests are not.
 | `rtl/bus/` | interconnect, TCM, APB bridge |
 | `rtl/periph/` | timer, interrupt controller, AMS interface |
 | `rtl/common/` | synchronisers, configuration parity, 64-bit counters |
+| `rtl/boot/` | QSPI boot loader (`BootEnable=1`; §9.4) |
+| `rtl/chip/` | full-chip pad ring (generated; `doc/chip.md`) |
 | `flow/` | LibreLane 3 hardening flow and its wrapper |
 | `scripts/gen_secded.py` | generates the ECC RTL |
 | `scripts/mkimage.py` | builds a 39-bit memory image from a binary |
+| `scripts/mkbootimg.py` | packs a CRC32-checked QSPI boot image from flat binaries |
+| `scripts/gen_padring.py` | generates the pad ring and chip flow config |
+| `scripts/gen_xschem_sym.py`, `xschem/` | xschem symbol for the IP block |
+| `verif/models/adc_ams_emu*.va` | Verilog-A / OpenVAF ADC-interface emulator |

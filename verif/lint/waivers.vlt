@@ -105,3 +105,37 @@ lint_off -rule UNUSEDSIGNAL -file "*cdriscv_csr.sv" -match "*trap_pc_i*"
 // and will shrink as the bench grows.
 // ---------------------------------------------------------------------
 lint_off -rule UNUSEDSIGNAL -file "*tb_cdriscv_subsys.sv"
+// ---------------------------------------------------------------------
+// FULL-CHIP lint only -- top module cdriscv_chip
+// (rtl/chip/cdriscv_chip.sv, the sg13g2_io pad ring).  None of the
+// waivers below fire on the default lint of cdriscv_subsys: each is
+// scoped to one of the two extra files the chip lint reads, so the RTL
+// stays under strict -Wall.  The chip lint reads, besides the normal
+// RTL, rtl/chip/cdriscv_chip.sv and the PDK pad-cell models
+// libs.ref/sg13g2_io/verilog/sg13g2_io.v, and sets a default timescale
+// so the vendor models (which carry one) do not raise TIMESCALEMOD
+// against our RTL (which does not).  doc/chip.md carries the exact
+// command line.
+//
+// The PDK models must be read so the pad instances resolve (a missing
+// module is a hard MODMISSING error, not a warning).  Their own lint
+// noise is waived file-scoped so it cannot mask a real warning in our
+// RTL:
+//   SPECIFYIGN    -- the models carry specify timing arcs Verilator
+//                    ignores for lint (zero-delay path stubs).
+//   DECLFILENAME  -- one file holds every pad/corner/filler module.
+// ---------------------------------------------------------------------
+lint_off -rule SPECIFYIGN   -file "*sg13g2_io.v"
+lint_off -rule DECLFILENAME -file "*sg13g2_io.v"
+
+// PINMISSING, cdriscv_chip: every pad master has vdd/vss/iovdd/iovss
+// supply pins that the chip netlist deliberately leaves unconnected --
+// power arrives by ring abutment at PNR, and the liberty blackbox
+// synthesis sees declares no such pins.  This is the same waiver
+// config_chip.json hands LibreLane's linter (LINTER_DISABLE_WARNINGS).
+lint_off -rule PINMISSING      -file "*cdriscv_chip.sv"
+
+// PINCONNECTEMPTY, cdriscv_chip: the SoC expansion APB and the retire
+// trace are not padded on this die (documented in the chip header and
+// doc/chip.md), so those subsystem outputs are intentionally left open.
+lint_off -rule PINCONNECTEMPTY -file "*cdriscv_chip.sv"

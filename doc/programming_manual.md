@@ -103,6 +103,17 @@ The ordering constraints are in [integration.md](integration.md) §5;
 4. Set `mtvec`, enable only the interrupts you handle, enter the
    control loop.
 
+**If the chip was built with the QSPI boot loader (`BootEnable=1`,
+off by default — [integration.md](integration.md) §9.4), your image is
+already in the TCMs**: the hardware loader validated the header and
+CRC32 of the flash image and only then released fetch, so step 1's TCM
+write is done for you and step 2 onward proceed unchanged. After a warm
+restart, read the safety controller `STATUS2` (`0x2c`): a nonzero
+retry count in bits [5:2] means the boot flash needed retries and is
+beginning to fail in the field — surface it. A *cold* boot that failed
+never releases the core, so the ungated error pin, not software, is the
+signal for that case. Pack a flash image with `scripts/mkbootimg.py`.
+
 ## 4. Traps
 
 ### 4.1 Model
