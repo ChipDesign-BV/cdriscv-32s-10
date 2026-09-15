@@ -169,6 +169,12 @@ module cdriscv_safety_cover (
     cp_flt_ams:       cover (fault_latched[10]);
     cp_flt_sw:        cover (fault_latched[11]);
     cp_flt_trap:      cover (fault_latched[12]);
+    // FLT_E2E (bit 14, always-on since V54).  The checker's own
+    // detection cannot fire in a fault-free simulation -- there is
+    // nothing on the wire to disagree with -- so this point measures
+    // the collection behind the bit (INJECT in safety_test); the
+    // checkers' detection statistics are block-e2e-link's business.
+    cp_flt_e2e:       cover (fault_latched[14]);
     // and each configured reaction actually firing
     cp_react_irq:     cover (irq_o);
     cp_react_reset:   cover (reset_req_o);

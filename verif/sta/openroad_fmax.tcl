@@ -18,7 +18,13 @@ set sram  $::env(SRAM_PDK)
 
 read_lef $pdk/lef/sg13g2_tech.lef
 read_lef $pdk/lef/sg13g2_stdcell.lef
-read_lef $sram/lef/RM_IHPSG13_1P_2048x64_c2_bm_bist.lef
+# The TCM is two 2048x32 data macros plus one 4096x8 check-bit macro
+# per instance since the V49 split; the single 2048x64 this script
+# used to read left every `make fmax` after V49 failing on ORD-2013
+# (master not found), with the pre-split placed netlist and SDF of
+# 2026-08-25 sitting in build/gate/ ready to be reused -- V55.
+read_lef $sram/lef/RM_IHPSG13_1P_2048x32_c2_bm_bist.lef
+read_lef $sram/lef/RM_IHPSG13_1P_4096x8_c3_bm_bist.lef
 
 # THREE corners, not one.  Reading only the typical library is what
 # made this script report "closed at 50 MHz" for a design that missed
@@ -27,11 +33,14 @@ read_lef $sram/lef/RM_IHPSG13_1P_2048x64_c2_bm_bist.lef
 # reading of the output sees it first.
 define_corners slow typ fast
 read_liberty -corner slow $pdk/lib/sg13g2_stdcell_slow_1p08V_125C.lib
-read_liberty -corner slow $sram/lib/RM_IHPSG13_1P_2048x64_c2_bm_bist_slow_1p08V_125C.lib
+read_liberty -corner slow $sram/lib/RM_IHPSG13_1P_2048x32_c2_bm_bist_slow_1p08V_125C.lib
+read_liberty -corner slow $sram/lib/RM_IHPSG13_1P_4096x8_c3_bm_bist_slow_1p08V_125C.lib
 read_liberty -corner typ  $pdk/lib/sg13g2_stdcell_typ_1p20V_25C.lib
-read_liberty -corner typ  $sram/lib/RM_IHPSG13_1P_2048x64_c2_bm_bist_typ_1p20V_25C.lib
+read_liberty -corner typ  $sram/lib/RM_IHPSG13_1P_2048x32_c2_bm_bist_typ_1p20V_25C.lib
+read_liberty -corner typ  $sram/lib/RM_IHPSG13_1P_4096x8_c3_bm_bist_typ_1p20V_25C.lib
 read_liberty -corner fast $pdk/lib/sg13g2_stdcell_fast_1p32V_m40C.lib
-read_liberty -corner fast $sram/lib/RM_IHPSG13_1P_2048x64_c2_bm_bist_fast_1p32V_m55C.lib
+read_liberty -corner fast $sram/lib/RM_IHPSG13_1P_2048x32_c2_bm_bist_fast_1p32V_m55C.lib
+read_liberty -corner fast $sram/lib/RM_IHPSG13_1P_4096x8_c3_bm_bist_fast_1p32V_m55C.lib
 
 read_verilog $::env(GATE_NETLIST)
 link_design cdriscv_subsys
@@ -114,6 +123,12 @@ insert_tiecells sg13g2_tielo/L_LO
 # simulating the input netlist against this SDF would annotate cells
 # that do not exist.
 write_verilog build/gate/cdriscv_subsys_pd_final.v
-write_sdf -corner default build/gate/cdriscv_subsys_pd.sdf
+# `-corner default` has not been a scene name since define_corners
+# (V45) -- the script aborted here on every run after that, leaving
+# the pre-V45 SDF of 2026-08-25 in build/gate/ for gate-sdf to reuse.
+# typ is what gate-sdf / gate-arch simulate; the slow corner is written
+# beside it for the record and for a CORNER=slow run.
+write_sdf -corner typ  build/gate/cdriscv_subsys_pd.sdf
+write_sdf -corner slow build/gate/cdriscv_subsys_pd_slow.sdf
 
 exit

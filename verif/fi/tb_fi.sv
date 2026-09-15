@@ -111,6 +111,12 @@ module tb_fi;
   logic [31:0]            rfw_data_dly [RfwDly:0];
   bit                     rfw_mismatch, rfw_armed;
   bit                     wpath_forced, wpath_arm;
+  // E2E link targets (34-38, V55): armed by the deposit block, applied
+  // by the block at the end on the first qualifying TCM beat.
+  bit                     e2e_wr_arm, e2e_rda_arm, e2e_rsp_arm, e2e_ir_arm, e2e_be_arm;
+  bit                     e2e_forced;
+  int unsigned            e2e_kind;
+  logic [31:0]            fsample;
   int unsigned            det_cycle;
   int unsigned            d, rfw_wait;
 
@@ -268,7 +274,10 @@ module tb_fi;
         idx   = bitpos % 31;
         b32   = bitpos % 32;
         b39   = bitpos % 39;
-        case (target % 27)
+        // Plain `target`: the random campaigns draw 0-26 (RANDOM_TARGETS
+        // in fi_campaign.py); 34-38 are reached only by --sweep and a
+        // modulo here would silently fold them onto other targets.
+        case (target)
           0: dut.g_lockstep.u_core.u_core_main.u_regfile.rf_q[idx + 1] =
              dut.g_lockstep.u_core.u_core_main.u_regfile.rf_q[idx + 1] ^ (32'b1 << b32);
           1: dut.g_lockstep.u_core.u_core_main.u_if.buf_rdata_q[bitpos % 2] =
@@ -368,6 +377,17 @@ module tb_fi;
           // any of five sample cycles for exactly that reason.
           26: wpath_arm = 1'b1;
 
+          // ---- E2E: the wires between the link endpoints (V55) ------
+          // Forced for exactly one clock on the first qualifying beat:
+          // a transient on the interconnect, which is the fault E2E
+          // exists to catch.  Deferred like target 26; the ids match
+          // cdriscv-32s-20's so the two variants' sweeps read alike.
+          34: begin e2e_wr_arm = 1'b1;  injected = 1'b0; end
+          35: begin e2e_rda_arm = 1'b1; injected = 1'b0; end
+          36: begin e2e_rsp_arm = 1'b1; injected = 1'b0; end
+          37: begin e2e_ir_arm = 1'b1;  injected = 1'b0; end
+          38: begin e2e_be_arm = 1'b1;  injected = 1'b0; end
+
           default: ;
         endcase
       if (trace_on && (target % 9) == 3)
@@ -375,6 +395,114 @@ module tb_fi;
       if (trace_on && (target % 9) == 4)
         $display("TRACE mie after =%0d",
                  dut.g_lockstep.u_core.u_core_main.u_csr.mstatus_mie_q);
+    end
+  end
+
+  // E2E: force one wire of the protected link for exactly one clock
+  // (ported from cdriscv-32s-20, V55).  The force uses a SAMPLED value,
+  // not a self-referencing expression (force a = a ^ m reads back the
+  // forced net and is a zero-delay loop); the wires are stable between
+  // the edges, so the sampled constant is exact for the cycle that
+  // matters, and the release on the next negedge ends the transient
+  // after the posedge at which the TCM, the endpoints and the safety
+  // controller all sampled it.
+  //
+  // Bit maps (documented here because the sweep is the point):
+  //   34  D-TCM write request:  [31:0] dtcm_wdata, [63:32] dtcm_addr,
+  //       [70:64] data_wr_chk (the carried check bits), [71] dtcm_we
+  //   35  D-TCM read request:   [31:0] dtcm_addr
+  //   36  data read response:   [31:0] data_rdata, [38:32] data_rd_chk,
+  //       [39] data_rd_chk_valid (the carried access-type)
+  //   37  fetch response:       [31:0] instr_rdata, [38:32] itcm_rd_chk,
+  //       [39] itcm_rd_chk_valid
+  //   38  D-TCM byte enables:   [3:0] dtcm_be -- the fold is
+  //       {data, addr, be}, so every be flip on a live write beat must
+  //       land in the detected column
+  always @(negedge clk) begin
+    if (e2e_forced) begin
+      case (e2e_kind)
+        0: release dut.dtcm_wdata;
+        1: release dut.dtcm_addr;
+        2: release dut.data_wr_chk;
+        3: release dut.dtcm_we;
+        4: release dut.data_rdata;
+        5: release dut.data_rd_chk;
+        6: release dut.data_rd_chk_valid;
+        7: release dut.instr_rdata;
+        8: release dut.itcm_rd_chk;
+        9: release dut.itcm_rd_chk_valid;
+       10: release dut.dtcm_be;
+        default: ;
+      endcase
+      e2e_forced = 1'b0;
+    end else if (rst_n && e2e_wr_arm &&
+                 dut.dtcm_req && dut.dtcm_gnt && dut.dtcm_we) begin
+      e2e_wr_arm = 1'b0;
+      injected   = 1'b1;
+      e2e_forced = 1'b1;
+      if ((bitpos % 72) < 32) begin
+        e2e_kind = 0; fsample = dut.dtcm_wdata;
+        force dut.dtcm_wdata = fsample ^ (32'b1 << (bitpos % 72));
+      end else if ((bitpos % 72) < 64) begin
+        e2e_kind = 1; fsample = dut.dtcm_addr;
+        force dut.dtcm_addr = fsample ^ (32'b1 << ((bitpos % 72) - 32));
+      end else if ((bitpos % 72) < 71) begin
+        e2e_kind = 2; fsample = {25'b0, dut.data_wr_chk};
+        force dut.data_wr_chk = fsample[6:0] ^ (7'b1 << ((bitpos % 72) - 64));
+      end else begin
+        e2e_kind = 3;
+        force dut.dtcm_we = 1'b0;   // the write beat delivered as a read
+      end
+    end else if (rst_n && e2e_rda_arm &&
+                 dut.dtcm_req && dut.dtcm_gnt && !dut.dtcm_we) begin
+      e2e_rda_arm = 1'b0;
+      injected    = 1'b1;
+      e2e_forced  = 1'b1;
+      e2e_kind = 1; fsample = dut.dtcm_addr;
+      force dut.dtcm_addr = fsample ^ (32'b1 << b32);
+    // Qualified on a READ response (pend_q && !we_q at the master
+    // endpoint): a write's response strobe carries no checked payload,
+    // so a force landing there is silent by construction and would
+    // only pad the silent column -- variant 2's sweep, which does not
+    // qualify this, reports 41 such "architecturally silent" runs.
+    end else if (rst_n && e2e_rsp_arm && dut.data_rvalid &&
+                 (dut.data_resp_itcm || dut.data_resp_dtcm) &&
+                 dut.u_e2e_data.pend_q && !dut.u_e2e_data.we_q) begin
+      e2e_rsp_arm = 1'b0;
+      injected    = 1'b1;
+      e2e_forced  = 1'b1;
+      if ((bitpos % 40) < 32) begin
+        e2e_kind = 4; fsample = dut.data_rdata;
+        force dut.data_rdata = fsample ^ (32'b1 << (bitpos % 40));
+      end else if ((bitpos % 40) < 39) begin
+        e2e_kind = 5; fsample = {25'b0, dut.data_rd_chk};
+        force dut.data_rd_chk = fsample[6:0] ^ (7'b1 << ((bitpos % 40) - 32));
+      end else begin
+        e2e_kind = 6; fsample = {31'b0, dut.data_rd_chk_valid};
+        force dut.data_rd_chk_valid = ~fsample[0];
+      end
+    end else if (rst_n && e2e_ir_arm && dut.instr_rvalid &&
+                 dut.instr_resp_itcm) begin
+      e2e_ir_arm = 1'b0;
+      injected   = 1'b1;
+      e2e_forced = 1'b1;
+      if ((bitpos % 40) < 32) begin
+        e2e_kind = 7; fsample = dut.instr_rdata;
+        force dut.instr_rdata = fsample ^ (32'b1 << (bitpos % 40));
+      end else if ((bitpos % 40) < 39) begin
+        e2e_kind = 8; fsample = {25'b0, dut.itcm_rd_chk};
+        force dut.itcm_rd_chk = fsample[6:0] ^ (7'b1 << ((bitpos % 40) - 32));
+      end else begin
+        e2e_kind = 9; fsample = {31'b0, dut.itcm_rd_chk_valid};
+        force dut.itcm_rd_chk_valid = ~fsample[0];
+      end
+    end else if (rst_n && e2e_be_arm &&
+                 dut.dtcm_req && dut.dtcm_gnt && dut.dtcm_we) begin
+      e2e_be_arm = 1'b0;
+      injected   = 1'b1;
+      e2e_forced = 1'b1;
+      e2e_kind = 10; fsample = {28'b0, dut.dtcm_be};
+      force dut.dtcm_be = fsample[3:0] ^ (4'b1 << (bitpos % 4));
     end
   end
 

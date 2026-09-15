@@ -25,7 +25,7 @@
 
 module tb_sdf_subsys;
 
-  localparam ClkPeriod    = 20;     // ns -- the 50 MHz target
+  localparam ClkPeriod    = 40;     // ns -- the 25 MHz signoff constraint (V45); 20 ns until V55, a stale trace of the V42 target
   localparam RefClkPeriod = 1000;   // ns
 
   reg clk, rst_n;
@@ -130,8 +130,13 @@ module tb_sdf_subsys;
 
   // ------------------------------------------------------------------
   // Program preload: split the 39-bit image across the macro banks.
-  // Word i lives in bank i[11], row i[10:0], zero-extended to 64 bits.
-  // The netlist is flat, so the bank instances carry escaped names.
+  // Since the V49 split a word's data lives in 2048x32 bank i[11],
+  // row i[10:0], and its seven check bits in the 4096x8 `u_par` macro
+  // at row i.  Until V55 this loaded only the data banks (the pre-split
+  // 2048x64 layout held the whole code word in one bank), so every
+  // read came back with zero check bits -- an uncorrectable ECC error
+  // on the first fetch and a bench that could only ever TIMEOUT.
+  // The netlist is flat, so the instances carry escaped names.
   // ------------------------------------------------------------------
   reg [38:0] img [0:4095];
   integer    i;
@@ -147,6 +152,8 @@ module tb_sdf_subsys;
         dut.\u_itcm.g_bank[1].u_bank .i_SRAM_1P_behavioral_bm_bist.memory[i]
             = {25'b0, img[i + 2048]};
       end
+      for (i = 0; i < 4096; i = i + 1)
+        dut.\u_itcm.u_par .i_SRAM_1P_behavioral_bm_bist.memory[i] = {1'b0, img[i][38:32]};
     end
     if ($value$plusargs("DTCM_HEX=%s", dtcm_hex)) begin
       $display("[TB-SDF] loading D-TCM from %0s", dtcm_hex);
@@ -157,6 +164,8 @@ module tb_sdf_subsys;
         dut.\u_dtcm.g_bank[1].u_bank .i_SRAM_1P_behavioral_bm_bist.memory[i]
             = {25'b0, img[i + 2048]};
       end
+      for (i = 0; i < 4096; i = i + 1)
+        dut.\u_dtcm.u_par .i_SRAM_1P_behavioral_bm_bist.memory[i] = {1'b0, img[i][38:32]};
     end
   end
 

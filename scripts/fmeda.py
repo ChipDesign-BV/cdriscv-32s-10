@@ -7,10 +7,13 @@
 # Everything in this file is one of exactly three kinds of number, and
 # each row of the tables says which:
 #
-#   MEASURED  -- element populations counted from the placed netlist
-#                (build/gate/cdriscv_subsys_pd_final.v), and diagnostic
+#   MEASURED  -- element populations counted from the E2E-inclusive
+#                synthesised netlist (build/gate/cdriscv_subsys_pd.v,
+#                V55: `python3 scripts/fmeda.py --netlist` re-derives
+#                every row from it and fails on drift), and diagnostic
 #                coverage from the fault-injection campaigns
-#                (verification_findings.md V9/V29/V30/V33/V37).
+#                (verification_findings.md V9/V29/V30/V33/V37, and the
+#                V55 re-run on this RTL incl. the E2E sweep).
 #   ASSUMED   -- base failure rates.  No foundry FIT data exists for
 #                this design; the values are typical published figures
 #                for a 130 nm-class process at sea level and are the
@@ -48,8 +51,29 @@ MBU_FRACTION = 0.02
 
 # ----------------------------------------------------------------- MEASURED
 SRAM_BITS   = 2 * 4096 * 39          # two TCMs, logical bits
-TOTAL_CELLS = 39191                   # placed netlist
-TOTAL_FF    = 5658
+NETLIST = "build/gate/cdriscv_subsys_pd.v"   # `make fmax` (or `synth`) writes it
+TOTAL_FF_NETLIST = 5736               # sg13g2_dfrbpq_1 instances, E2E-inclusive (V55)
+TOTAL_FF    = TOTAL_FF_NETLIST        # was 5658 pre-E2E (V44)
+
+# Q-net -> row attribution, first match wins (bit index stripped).  A
+# Q-net is named after the RTL register it implements or, where the
+# register directly drives a wire of the subsystem, after that wire.
+# The rules follow the RTL instance tree of rtl/cdriscv_subsys.sv.
+ATTRIBUTION = [
+    ("unattributed (renamed)",   r"^_\d+_$"),
+    ("core pair (lockstep)",     r"^g_lockstep\.u_core\.u_core_(main|check)\."),
+    ("lockstep delay+compare",   r"^g_lockstep\."),
+    ("TCM control+ECC logic",    r"^u_[id]tcm\."),
+    ("E2E link endpoints",       r"^u_e2e_"),
+    ("safety controller",        r"^(u_safety\.|f_sw$|f_out_en$|inj_tcm_mask$|clkm_fault$)"),
+    ("watchdog",                 r"^u_wdog\."),
+    ("clock monitor",            r"^u_clkmon\."),
+    ("interrupt controller",     r"^u_irq_ctrl"),
+    ("timer",                    r"^u_timer\."),
+    ("AMS interface",            r"^(u_ams\.|(adc_ch|dac_data|dac_we|atest_en|atest_sel)_o$)"),
+    ("memory BIST (x2)",         r"^(u_mbist_[id]\.|[id]bist_)"),
+    ("bus + sync + APB glue",    r"."),
+]
 
 # Flip-flop populations per functional element, counted from the
 # netlist's Q-net names.  "dc_*" are the measured diagnostic coverages:
@@ -59,16 +83,22 @@ TOTAL_FF    = 5658
 # upsets that provably cannot violate the goal (masked/overwritten).
 ELEMENTS = [
     # name,                ffs,  safe, dc_seu, dc_mbu, dc_perm, mechanism
-    ("core pair (lockstep)", 3295, 0.45, 0.99,  0.99,  0.99,
-     "DCLS compares every output; V9/V37 campaigns: 0 SDC in ~10^4; "
+    ("core pair (lockstep)", 3299, 0.45, 0.99,  0.99,  0.99,
+     "DCLS compares every output; V9/V37/V55 campaigns: 0 SDC; "
      "residual is the comparator itself and common-mode"),
-    ("lockstep delay+compare", 448, 0.10, 0.90,  0.90,  0.90,
+    ("lockstep delay+compare", 556, 0.10, 0.90,  0.90,  0.90,
      "self-checking by construction (a delay-line upset causes a "
      "mismatch); residual: faults forcing permanent agreement"),
-    ("TCM control+ECC logic",  108, 0.30, 0.95,  0.95,  0.95,
+    ("TCM control+ECC logic",   91, 0.30, 0.95,  0.95,  0.95,
      "ECC datapath faults surface as detected errors or bus faults; "
      "BIST covers permanent"),
-    ("safety controller",      196, 0.05, 0.999, 0.90,  0.90,
+    ("E2E link endpoints",      91, 0.10, 0.90,  0.90,  0.90,
+     "self-evidencing like the comparator: a corrupted held address or "
+     "check-bit register mismatches the next beat it qualifies "
+     "(block-e2e-link 12 024 checks, mutants 10/10).  The LINK WIRES "
+     "they guard were swept (fi-e2e, V55): 400/400 wire-bit transients "
+     "detected, 0 silent, 0 SDC, median 4 cycles"),
+    ("safety controller",      200, 0.05, 0.999, 0.90,  0.90,
      "config parity (V37: 0 latent / 2600); sticky status is "
      "self-evidencing; residual: reaction wiring"),
     ("watchdog",                 9, 0.05, 0.999, 0.90,  0.90,
@@ -80,13 +110,20 @@ ELEMENTS = [
      "config parity on ENABLE/MODE; pending is dynamic"),
     ("timer",                   97, 0.30, 0.999, 0.90,  0.90,
      "config parity on MTIMECMP/CTRL; mtime dynamic"),
-    ("AMS interface",          344, 0.30, 0.999, 0.90,  0.85,
+    ("AMS interface",          365, 0.30, 0.999, 0.90,  0.85,
      "config parity incl. limits and mask (V37); results dynamic"),
-    ("memory BIST (x2)",       120, 0.60, 0.50,  0.50,  0.70,
+    ("memory BIST (x2)",       146, 0.60, 0.50,  0.50,  0.70,
      "dormant in mission; faults surface at next BIST run -- "
      "detected late, so counted mostly latent for SEU"),
-    ("bus + reset sync",         7, 0.05, 0.95,  0.95,  0.95,
-     "bus errors trap; reset-sync faults are fail-stop"),
+    ("bus + sync + APB glue",  100, 0.30, 0.90,  0.90,  0.90,
+     "APB bridge / bus / reset-sync / output registers: bus errors "
+     "trap, reset-sync faults are fail-stop, APB output upsets are "
+     "read back by the software mitigation (V30) -- assigned, not "
+     "swept"),
+    ("unattributed (renamed)",  536, 0.10, 0.90,  0.90,  0.90,
+     "flops whose Q-nets synthesis renamed (_NNN_): mostly the cores' "
+     "pipeline and CSR state by count; carried at a dc below every "
+     "named row's, deliberately"),
     ("registers: core RF",       0, 0.60, 0.99,  0.50,  0.99,
      "parity per word (in core-pair count; kept for the record)"),
 ]
@@ -98,7 +135,68 @@ SRAM = ("TCM arrays (SEC-DED)", SRAM_BITS, 0.40, 0.996, 0.996, 0.996,
 def fit_ff(n):    return n * SEU_FF_FIT_PER_MBIT / MBIT
 def fit_sram(n):  return n * SEU_SRAM_FIT_PER_MBIT / MBIT
 
+FF_CELL = "sg13g2_dfrbpq_1"      # the only sequential cell in the netlist
+
+
+def count_netlist(path):
+    """Re-derive the per-row flip-flop populations: every FF_CELL
+    instance's .Q net, bit index stripped, attributed by the first
+    matching ATTRIBUTION rule.  Returns (counts, total, unmatched)."""
+    import collections, re
+    rules = [(name, re.compile(pat)) for name, pat in ATTRIBUTION]
+    counts = collections.Counter()
+    unmatched, total, in_ff = [], 0, False
+    with open(path) as f:
+        for line in f:
+            if line.strip().startswith(FF_CELL + " "):
+                in_ff = True
+                total += 1
+                continue
+            if in_ff and ".Q(" in line:
+                q = line.split(".Q(", 1)[1].rsplit(")", 1)[0].strip()
+                q = re.sub(r"\[\d+\]", "", q.lstrip("\\").strip())
+                for name, rx in rules:
+                    if rx.search(q):
+                        counts[name] += 1
+                        break
+                else:
+                    unmatched.append(q)
+                in_ff = False
+    return counts, total, unmatched
+
+
+def check_netlist(path):
+    """Compare the table against a fresh recount of `path`."""
+    counts, total, unmatched = count_netlist(path)
+    ok = True
+    print("recount of %s" % path)
+    print("%-28s %8s %8s" % ("element", "table", "netlist"))
+    for name, ffs, *_ in ELEMENTS:
+        if name == "registers: core RF":
+            continue
+        flag = "" if counts[name] == ffs else "   <-- DRIFT"
+        ok = ok and not flag
+        print("%-28s %8d %8d%s" % (name, ffs, counts[name], flag))
+    print("%-28s %8d %8d" % ("TOTAL", TOTAL_FF_NETLIST, total))
+    if total != TOTAL_FF_NETLIST or unmatched or sum(counts.values()) != total:
+        ok = False
+    print("attributed %d + unattributed %d = %d (netlist %d): %s"
+          % (total - counts["unattributed (renamed)"],
+             counts["unattributed (renamed)"], sum(counts.values()), total,
+             "OK" if ok else "MISMATCH"))
+    return ok
+
+
 def main():
+    import argparse, sys
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--netlist", nargs="?", const=NETLIST, metavar="NETLIST_V",
+                    help="re-derive every row's population from this "
+                         "netlist and exit non-zero on drift (default: %s)"
+                         % NETLIST)
+    args = ap.parse_args()
+    if args.netlist:
+        sys.exit(0 if check_netlist(args.netlist) else 1)
     rows = []
     tot = dict(lam=0.0, safe=0.0, spf=0.0, lat=0.0)
 
@@ -156,7 +254,7 @@ def main():
     lat_mech = sum(r[3] for r in mech_rows)
     lfm = 1 - lat_mech / lam_mech
 
-    print("cdriscv-32s-10 FMEDA -- computed %s" % "2026-08-25")
+    print("cdriscv-32s-10 FMEDA -- computed %s" % "2026-09-14")
     print("ASSUMED rates: SRAM %.0f FIT/Mbit, FF %.0f FIT/Mbit, "
           "permanent %.0f FIT total, MBU fraction %.0f%%"
           % (SEU_SRAM_FIT_PER_MBIT, SEU_FF_FIT_PER_MBIT,

@@ -526,7 +526,9 @@ bench `$readmemh`); the boot sequence in §5 is unchanged.
 > Note: the loader still folds away completely at `BootEnable=0`, but
 > the subsystem is **no longer bit-identical to the 2026-08-24 (V52)
 > signoff** regardless of `BootEnable` — the always-on E2E protection
-> (§9.5) was added afterward. The V52 GDS describes the pre-E2E design.
+> (§9.5) was added afterward. The V52 GDS describes the pre-E2E design;
+> the verification objectives were re-run on the E2E-inclusive RTL in
+> V55 (2026-09-14), the harden was not.
 
 ### 9.5 End-to-end bus protection (E2E, always on)
 

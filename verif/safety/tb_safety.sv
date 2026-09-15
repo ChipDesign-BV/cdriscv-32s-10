@@ -121,6 +121,11 @@ module tb_safety;
   // ------------------------------------------------------------------
   int unsigned latency;
 
+  // E2E scenarios (V55): a sampled one-clock force on a live beat
+  bit          e2e_landed;
+  logic [3:0]  e2e_be_s;
+  logic [6:0]  e2e_chk_s;
+
   initial begin
     errors = 0;
     checks = 0;
@@ -561,6 +566,58 @@ module tb_safety;
     ext_irq[0] = 1'b0;
     repeat (2) @(posedge clk);
     checks++;   // reaching here without X-propagation is the check
+
+    // ---- E2E, at system level (V55, ported from cdriscv-32s-20) -----
+    // A one-clock transient on the D-TCM byte enables during a live
+    // write beat -- the fault class the fold {data, addr, be} exists
+    // for.  A force with a sampled value, released on the next negedge
+    // (the same shape as tb_fi's injection), so the endpoints and the
+    // safety controller all sample the corrupted beat exactly once.
+    // Also the only fault-free-bench path that toggles the endpoints'
+    // wr_err / rd_err and the collector's f_e2e -- the toggle metric
+    // read 93.9 % without it.
+    do_reset();
+    repeat (50) @(posedge clk);
+    e2e_landed = 1'b0;
+    for (int w = 0; w < 5000 && !e2e_landed; w++) begin
+      @(negedge clk);
+      if (dut.dtcm_req && dut.dtcm_gnt && dut.dtcm_we) begin
+        e2e_be_s = dut.dtcm_be;
+        force dut.dtcm_be = e2e_be_s ^ 4'b0010;
+        @(negedge clk);
+        release dut.dtcm_be;
+        e2e_landed = 1'b1;
+      end
+    end
+    repeat (6) @(posedge clk);
+    report("E2E: a be flip on a live write beat latches FLT_E2E",
+           e2e_landed && (dut.u_safety.status_q[14] === 1'b1),
+           $sformatf("landed=%0d status=%08x",
+                     e2e_landed, dut.u_safety.status_q));
+
+    // The read direction: corrupt the check bits of a read response so
+    // the master-side endpoint flags (rd_err, the other half of f_e2e).
+    do_reset();
+    repeat (50) @(posedge clk);
+    e2e_landed = 1'b0;
+    for (int w = 0; w < 5000 && !e2e_landed; w++) begin
+      @(negedge clk);
+      // qualify on a READ response: a write's response strobe carries
+      // no checked payload, so a force landing there proves nothing
+      if (dut.data_rvalid && (dut.data_resp_itcm || dut.data_resp_dtcm) &&
+          dut.u_e2e_data.pend_q && !dut.u_e2e_data.we_q) begin
+        e2e_chk_s = dut.data_rd_chk;
+        force dut.data_rd_chk = e2e_chk_s ^ 7'b1;
+        @(negedge clk);
+        release dut.data_rd_chk;
+        e2e_landed = 1'b1;
+      end
+    end
+    repeat (6) @(posedge clk);
+    report("E2E: a corrupted read response latches FLT_E2E",
+           e2e_landed && (dut.u_safety.status_q[14] === 1'b1),
+           $sformatf("landed=%0d status=%08x",
+                     e2e_landed, dut.u_safety.status_q));
 
     if (errors == 0) $display("[tb_safety] PASS: %0d checks", checks);
     else             $display("[tb_safety] FAIL: %0d of %0d checks", errors, checks);

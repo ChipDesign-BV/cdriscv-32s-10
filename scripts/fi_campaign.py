@@ -79,7 +79,21 @@ TARGETS = {
     24: "machine timer MTIMECMP",
     25: "AMS channel mask",
     26: "register file WRITE PATH (transient)",
+    # -- E2E (V55).  Traffic-qualified: the bench lands them on the
+    #    first cycle a TCM beat is on the wires, and they are reached
+    #    only through --sweep, never by the random campaigns, whose
+    #    fault list stays the 27 above so the per-target rows remain
+    #    comparable across runs.  Ids match cdriscv-32s-20's.
+    34: "E2E link: D-TCM write request",
+    35: "E2E link: D-TCM read request addr",
+    36: "E2E link: data read response",
+    37: "E2E link: fetch response",
+    38: "E2E link: D-TCM byte enables",
 }
+
+# The random campaigns draw from the legacy fault list only; the E2E
+# targets need their qualifiers' traffic and are swept systematically.
+RANDOM_TARGETS = 27
 
 MECHANISM = {
     0: "lockstep", 1: "I-TCM ECC corrected", 2: "I-TCM ECC uncorrectable",
@@ -87,6 +101,7 @@ MECHANISM = {
     5: "register file parity", 6: "watchdog", 7: "clock monitor",
     8: "bus error", 9: "memory BIST", 10: "AMS", 11: "software",
     13: "configuration parity (ungated)",
+    14: "E2E",
     12: "core trap",
 }
 
@@ -116,6 +131,12 @@ def main():
                     help="simulations to run at once")
     ap.add_argument("--max-sim-cycle", type=int, default=50000,
                     help="give-up point for a workload that never finishes")
+    ap.add_argument("--sweep", default="",
+                    help="systematic sweep instead of the random fault "
+                         "list: comma-separated T:NBITS[:REPS] specs -- "
+                         "every bit of target T injected REPS times "
+                         "(default 1) at seeded-random cycles.  --runs "
+                         "is ignored in this mode.")
     args = ap.parse_args()
 
     # A clean reference for the configuration signature: taken from the
@@ -142,10 +163,22 @@ def main():
     # independent processes and there is no reason to serialise them;
     # the plan asks for 10^4 injections and one at a time does not get
     # there in a working day.
-    faults = [(rng.randrange(len(TARGETS)),
-               rng.randrange(39),
-               rng.randrange(args.min_cycle, args.max_cycle))
-              for _ in range(args.runs)]
+    if args.sweep:
+        faults = []
+        for spec in args.sweep.split(","):
+            parts = spec.split(":")
+            t_id, nbits = int(parts[0]), int(parts[1])
+            reps = int(parts[2]) if len(parts) > 2 else 1
+            for b in range(nbits):
+                for _ in range(reps):
+                    faults.append((t_id, b,
+                                   rng.randrange(args.min_cycle,
+                                                 args.max_cycle)))
+    else:
+        faults = [(rng.randrange(RANDOM_TARGETS),
+                   rng.randrange(39),
+                   rng.randrange(args.min_cycle, args.max_cycle))
+                  for _ in range(args.runs)]
 
     def run_one(f):
         # A run that overruns is reported, not raised.  An uncaught
@@ -225,8 +258,12 @@ def main():
     total = sum(classes.values()) - classes["not-injected"]
     print("Fault injection campaign: %d single event upsets" % total)
     print("Workload: %s" % args.name)
+    if args.sweep:
+        print("Systematic sweep: %s (target:bits[:reps]; every wire bit "
+              "at least once,\ninjection cycles seeded from --seed %d)"
+              % (args.sweep, args.seed))
     print("Fault list: %d named state elements (not every flop -- see tb_fi.sv)\n"
-          % len(TARGETS))
+          % (len(set(f[0] for f in faults)) if args.sweep else RANDOM_TARGETS))
     if classes["not-injected"]:
         print("  WARNING: %d runs never injected -- the cycle range runs past\n"
               "  the end of the workload.  Excluded from the counts below."

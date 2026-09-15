@@ -10,11 +10,26 @@ current list of those is in `verification_findings.md`.
 
 ## W2 — defensive `default` arms over fully enumerated selectors (2026-08-21)
 
-Fourteen uncovered lines remain and every one of them is a `default:`
+Fourteen uncovered lines remained on 2026-08-21 (sixteen since 2026-09-14, see below) and every one of them is a `default:`
 arm whose selector is already fully enumerated by the arms above it.
 They fall into two groups — a third, W2c, has since been withdrawn.
 
 Line coverage with this waiver applied is 100 %; without it, 96.3 %.
+
+**Re-reconciled 2026-09-14 on the E2E-inclusive RTL (V55), with the
+QSPI boot bench in the coverage merge.** The RTL line metric now
+counts the loader (its `BootEnable=1` bench joined the merge to
+exercise its ports and the boot inputs of the safety controller, which
+had left the toggle metric at 93.9 %): 381 lines, **95.3 % measured
+(363 of 381), 100 % with 16 waived — 14 here as before, plus the
+loader's two upset-recovery arms (`cdriscv_qspi_boot.sv:408` and
+`:528`, W2a)**. Two other loader lines the first re-run left
+uncovered — the SPI divider's count-up branch (371–372), dead at the
+chip's `BootSclkDiv=2` — were *not* waived: the flow builds the boot
+bench at `/4` as well and they are covered. Every line number below
+was re-derived from the 2026-09-14 annotated database (they had
+drifted by two to six lines since the E2E and loader edits). Toggle
+96.0 %, functional 100 % of 66 (the new `cp_flt_e2e` among them).
 
 ### A correction: this waiver was wrong when first written
 
@@ -44,12 +59,14 @@ part of it.
 
 | file | line |
 |------|------|
-| `cdriscv_ams_if.sv` | 159 |
-| `cdriscv_apb_bridge.sv` | 72 |
-| `cdriscv_core.sv` | 436 |
-| `cdriscv_lsu.sv` | 104 |
-| `cdriscv_mbist.sv` | 127 |
-| `cdriscv_multdiv.sv` | 115 |
+| `cdriscv_ams_if.sv` | 162 |
+| `cdriscv_apb_bridge.sv` | 74 |
+| `cdriscv_core.sv` | 439 |
+| `cdriscv_lsu.sv` | 106 |
+| `cdriscv_mbist.sv` | 133 |
+| `cdriscv_multdiv.sv` | 117 |
+| `cdriscv_qspi_boot.sv` | 528 | new 2026-09-14 (V55): `default: state_q <= S_IDLE; // upset recovery`, `state_e` 3 bits, 7 of 8 used |
+| `cdriscv_qspi_boot.sv` | 408 | new 2026-09-14 (V55): `default: ;` in the SPI-fall `unique case (phase_q)` — `phase_e` 3 bits, 7 of 8 used, and the two members absent from the case (`P_NONE`, `P_GAP`) are exactly the phases in which `spi_shifting`, hence `spi_fall`, is false, so the arm is reached only by an upset of `phase_q` |
 
 Each is `default: state_d = <IDLE>;` in a `unique case (state_q)` that
 already lists every value of the state enum. No sequence of inputs can
@@ -127,12 +144,12 @@ from the subsystem netlist was abandoned for exactly that reason.
 
 | file | line | selector |
 |------|------|----------|
-| `cdriscv_alu.sv` | 124 | ALU operation enum |
-| `cdriscv_decoder.sv` | 252 | OP-IMM `funct3`, all eight values listed |
-| `cdriscv_core.sv` | 197, 206 | operand select enum |
-| `cdriscv_core.sv` | 479 | writeback select enum |
-| `cdriscv_lsu.sv` | 80, 142 | `addr[1:0]`, all four values listed |
-| `cdriscv_multdiv.sv` | 195 | mul/div operation enum |
+| `cdriscv_alu.sv` | 126 | ALU operation enum |
+| `cdriscv_decoder.sv` | 254 | OP-IMM `funct3`, all eight values listed |
+| `cdriscv_core.sv` | 200, 209 | operand select enum |
+| `cdriscv_core.sv` | 482 | writeback select enum |
+| `cdriscv_lsu.sv` | 82, 144 | `addr[1:0]`, all four values listed |
+| `cdriscv_multdiv.sv` | 197 | mul/div operation enum |
 
 The LSU pair is the clearest case: `unique case (addr_i[1:0])` lists
 `2'b00` through `2'b11`, so the default is unreachable by construction

@@ -19,34 +19,40 @@ things.
 > [!IMPORTANT]
 > **Verified for project use — not qualified for safety-critical use.**
 >
-> As of 2026-08-24 the O1–O7 gate of
-> [doc/verification_plan.md](doc/verification_plan.md) is met — the
-> plan's own definition of "may be used in a project". The audit, from
-> runs in this repository:
+> As of 2026-09-14 (V55) the O1–O7 gate of
+> [doc/verification_plan.md](doc/verification_plan.md) is met **on the
+> E2E-inclusive RTL** — the plan's own definition of "may be used in a
+> project"; the 2026-08-24 numbers were re-produced on the current
+> design, not carried over. The audit, from runs in this repository:
 >
 > | # | Objective | Criterion | State |
 > |---|-----------|-----------|-------|
 > | O1 | ISA conformance | `riscv-arch-test` passes vs Spike | **met** — 85 of 85, current suite, unmodified |
-> | O2 | golden-model random co-simulation | ≥ 10⁹ instructions, zero mismatches | **met** — 1 008 435 332 instructions, 27 500 programs, zero mismatches |
+> | O2 | golden-model random co-simulation | ≥ 10⁹ instructions, zero mismatches | **met** — 1 035 684 199 instructions, 35 600 programs, zero mismatches (V55; V40's 1 008 435 332 was the pre-E2E run) |
 > | O3 | block benches | all directed tests pass | **met** |
-> | O4 | safety mechanisms fire, and only then | fires + stays-quiet test per mechanism | **met** — benches plus ~10⁴ fault injections |
+> | O4 | safety mechanisms fire, and only then | fires + stays-quiet test per mechanism | **met** — benches plus 10 400 random and 400 swept fault injections (V55) |
 > | O5 | structural cleanliness | lint clean, documented waivers | **met** |
-> | O6 | code coverage | 100 % stmt/branch, ≥ 95 % toggle, reviewed waivers | **met** — 96.2 % line (100 % with reviewed waivers), 96.2 % toggle |
-> | O7 | functional coverage | cross matrices closed | **met** — 65 of 65 cover points |
+> | O6 | code coverage | 100 % stmt/branch, ≥ 95 % toggle, reviewed waivers | **met** — 95.9 % line (100 % with 16 reviewed waivers), 96.2 % toggle, loader included (V55) |
+> | O7 | functional coverage | cross matrices closed | **met** — 66 of 66 cover points, incl. `FLT_E2E` |
 >
 > Also measured: configuration-register upsets hardware-detected
 > (latent 46.4 % → 0), diagnostic latency median 2–4 cycles, zero
-> silent data corruption over ~10⁴ injections, and **timing closed at
+> silent data corruption over 10 400 injections, every wire bit of the
+> E2E-protected TCM links detected when flipped (400 of 400), and
+> **timing closed at
 > the 25 MHz integration target across all three PVT corners** (setup
-> +2.698 ns worst, hold +0.133 ns worst, TNS 0 on the routed netlist).
-> An earlier closure figure against a shorter target was typical-corner
-> only and was withdrawn in V45. Twelve
+> +2.698 ns worst, hold +0.133 ns worst, TNS 0 on the routed netlist —
+> the V52 GDS, which predates E2E; the E2E netlist's placement estimate
+> is +13.9 ns reg2reg at the same constraint, and its harden is
+> deferred). An earlier closure figure against a shorter target was
+> typical-corner only and was withdrawn in V45. Twelve
 > functional defects were found and fixed on the way; CI re-runs the
 > gate on every push.
 >
-> **The full plan, O1–O9, now has a result for every objective.** The
-> FMEDA exists ([doc/fmeda.md](doc/fmeda.md)): SPFM 99.6 %, LFM 91.4 %,
-> residual 0.87 FIT — **under assumed failure rates**, clearly labeled,
+> **The full plan, O1–O9, has a result for every objective on the
+> current RTL.** The FMEDA ([doc/fmeda.md](doc/fmeda.md), recomputed
+> from the E2E netlist): SPFM 99.56 %, LFM 91.27 %, residual 1.03 FIT
+> — **under assumed failure rates**, clearly labeled,
 > that a real safety case must replace with foundry data. An
 > architectural statement, not a certification: no ISO 26262 or
 > IEC 61508 compliance of any kind is claimed, and the remaining work
@@ -243,31 +249,30 @@ Every objective of [doc/verification_plan.md](doc/verification_plan.md)
 has a result. The banner above audits the gate; the detail and every
 number's provenance live in
 [doc/verification_findings.md](doc/verification_findings.md) (phases
-V0–V54, newest first). Summary, one line per area:
+V0–V55, newest first). Summary, one line per area:
 
 | Area | State | Evidence |
 |------|-------|----------|
 | Lint & structure | **clean** | `make lint lint-tb`, hard gate; waivers argued in [verif/lint/waivers.vlt](verif/lint/waivers.vlt) |
 | Directed benches | **all pass** | 17 targets: blocks (ALU, SEC-DED, mul/div, clkmon), safety both halves, reactions, peripherals, traps, AMS, register walk, read-back, FENCE/FENCE.I, back-pressure |
-| Co-simulation vs Spike | **O2 met** | 1 008 435 332 random instructions, 27 500 programs, zero mismatches on PC, instruction, register and memory writes (V40); plus directed and stall-sweep runs |
+| Co-simulation vs Spike | **O2 met, on the E2E RTL** | 1 035 684 199 random instructions, 35 600 programs, zero mismatches on PC, instruction, register and memory writes (V55, six runners with disjoint seeds, 3 h); plus directed and stall-sweep runs |
 | Architectural suite | **85 of 85** | current `riscv-arch-test`, unmodified, built `-mno-relax` (V36); `make riscof` |
-| Formal | **6 benches pass** | full proofs for SEC-DED (all 2³² words, every 1–2-bit error) and decoder (all 2³² encodings); BMC elsewhere; ungated config-parity contract proven; mutation tested |
-| Coverage | **O6/O7 met** | 96.2 % line (100 % with [reviewed waivers](verif/coverage_waivers.md)), 96.2 % toggle, 100 % functional over 65 cover points (V40) |
-| Fault injection | **0 SDC, 0 hangs, 0 latent** | ~10⁴ classified upsets; latent was **46.4 %** before the V37 configuration parity, zero after, detection median 2–4 cycles (V29/V33/V37); `make fi` |
-| Timing | **closed at 25 MHz, 3 corners** | setup **+2.698 ns** (slow), hold **+0.133 ns** (fast), TNS 0, LVS matches uniquely (V52); the square alternative is +3.16 / +0.15 ns. `make fmax` |
-| Gate level | **O8 met** | zero-delay netlist cycle-identical to RTL; smoke + 12 architectural tests on the placed netlist with SDF, signatures bit-exact vs Spike (V42/V43); `make gate gate-sdf gate-arch` |
-| FMEDA | **SPFM 99.6 % / LFM 91.4 %** | under stated assumed failure rates — see [doc/fmeda.md](doc/fmeda.md) for what is measured vs assumed (V44); `scripts/fmeda.py` |
-| CI | **green** | [verify.yml](.github/workflows/verify.yml): full gate on every push, gate-level/timing/fault-injection nightly |
+| Formal | **6 benches pass** | re-run on the E2E RTL (V55): full proofs for SEC-DED (all 2³² words, every 1–2-bit error) and decoder (all 2³² encodings); BMC elsewhere; ungated config-parity contract proven; mutation tested |
+| Coverage | **O6/O7 met** | 95.9 % line (100 % with 16 [reviewed waivers](verif/coverage_waivers.md)), 96.2 % toggle, 100 % functional over 66 cover points, on the E2E RTL with the loader's boot benches in the merge (V55; toggle had read 93.9 % and was recovered by stimulus, not waivers) |
+| Fault injection | **0 SDC, 0 hangs, 0 latent** | 10 400 classified upsets over four workloads on the E2E RTL (V55) plus the 400-upset E2E link sweep, **400 of 400 detected**; latent was **46.4 %** before the V37 configuration parity, zero after, detection median 2–4 cycles; `make fi` (incl. `fi-e2e`) |
+| Timing | **closed at 25 MHz, 3 corners — pre-E2E GDS** | setup **+2.698 ns** (slow), hold **+0.133 ns** (fast), TNS 0, LVS matches uniquely (V52, before E2E); the E2E netlist's placement estimate is reg2reg **+13.9 ns** at 40 ns (`make fmax`, V55 — the target was broken from V49 to V55, see the findings); the re-harden is deferred |
+| Gate level | **O8 met, on the E2E netlist** | zero-delay netlist all pass (blocks, 5 FSM recoveries, subsystem programs); smoke + 12 architectural tests on the placed E2E netlist with OpenROAD SDF cell delays at the 40 ns signoff clock, signatures bit-exact vs Spike (V55; V42/V43 were pre-E2E); `make gate gate-sdf gate-arch` — the SDF path had four stale pre-split traces, all found and fixed in V55 |
+| FMEDA | **SPFM 99.56 % / LFM 91.27 %, 1.03 FIT** | recomputed from the E2E netlist (5 736 flops, `scripts/fmeda.py --netlist` asserts the count), E2E row measured by the sweep, under stated assumed failure rates (V55). One assigned figure can move LFM across the ASIL D line — the 536 synthesis-renamed flops carried at dc 0.90 (89.84 % at 0.50); see [doc/fmeda.md](doc/fmeda.md) §5 |
+| CI | **green** | [verify.yml](.github/workflows/verify.yml): full gate on every push; gate-level, `sta`, `fmax`, SDF smoke and fault injection (incl. the E2E sweep) nightly |
 | QSPI boot loader (optional) | **verified, off by default** | block bench 41 checks, end-to-end boot 1-bit + quad, corrupt-image sticky-fault path, mutation 10/10 (V53/V54); `make block-qspi bootsim bootsim-fault`. `BootEnable=0` folds it away completely |
-| E2E bus protection (always-on) | **block-verified (V54)** | check bits over {payload, address, byte-enables} on both TCM links; `make block-e2e` 154 096 checks / `block-e2e-link` 12 024 checks, `make sim`/`safety` clean with it on. Added after V52 — see the caveat below |
+| E2E bus protection (always-on) | **verified and measured (V54/V55)** | check bits over {payload, address, byte-enables} on both TCM links; `make block-e2e` 154 096 checks / `block-e2e-link` 12 024 checks; `fi-e2e` sweeps every wire bit of both links on live beats — 400 of 400 detected, median 4 cycles; two system-level scenarios in `tb_safety`; its own FMEDA row |
 
-> **The Timing (V52) and objective (O1–O9) rows above describe the
-> design *before* E2E.** E2E (V54, always-on) was added 2026-09-08 and
-> re-opens that signoff: it is block/safety/smoke-verified, but the full
-> objective suite (O2 co-sim, O6/O7 coverage, O8 gate-level, O9 FMEDA)
-> and the physical signoff have **not** been re-run on the E2E-inclusive
-> RTL. Treat those rows as "valid for the pre-E2E configuration;
-> re-run pending for the current RTL".
+> **What the V55 re-run did and did not cover.** E2E (V54, always-on)
+> re-opened the V52 signoff; every objective row above has since been
+> re-produced on the E2E-inclusive RTL (finding V55). What has *not*
+> been redone is the physical implementation: the Timing row is the
+> pre-E2E V52 GDS, and the full-chip harden of the current RTL is a
+> deliberate deferral ([doc/chip.md](doc/chip.md)).
 
 Twelve functional defects and two flow defects were found and fixed on
 the way; four tool defects were reported upstream. The wrong guesses

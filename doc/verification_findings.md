@@ -5,6 +5,164 @@ first. Each finding records what was wrong, how it was found, and what
 was done about it. See `verification_plan.md` for the plan these come
 from.
 
+## Phase V55 — the objective suite re-run on the E2E-inclusive RTL (2026-09-14)
+
+V54 added E2E always-on and said plainly that every objective number
+in the README was a pre-E2E number. This phase re-runs the suite on
+the RTL as it stands — `6a6b0e6` plus the bench and flow changes
+below, no RTL change — and records what each run found. The full-chip
+harden stays deferred (`doc/chip.md`); nothing here is a physical
+result.
+
+| Objective / check | Result on the E2E-inclusive RTL |
+|---|---|
+| O5 lint, `lint-tb` | clean, 0 warnings (benches re-linted after every edit below) |
+| O3 block benches, `block` | all pass, incl. `block-e2e` 154 096 checks, `block-e2e-link` 12 024 |
+| `sim`, `synth`, `safety`, `periph`, `reaction`, `trap`, `ams`, `regwalk`, `rdback`, `fence`, `bootsim`, `bootsim-fault` | all pass; `safety_test` grew tests 10/11 (INJECT of `FLT_E2E`, W1C), `tb_safety` grew two E2E scenarios — 27 checks |
+| O1 `riscof` | **85 of 85** |
+| O2 co-simulation vs Spike | directed `cosim` and the stall sweep pass; `cosim-random` 2 000 programs / 30 018 709 instructions clean; then the marathon: **six runners × 5 600 programs, disjoint seed ranges, 1 005 665 490 instructions, zero mismatches** (2 h 58 min wall) — **1 035 684 199 instructions over 35 600 programs on this RTL** |
+| formal, 6 benches | **all PASS** (if_stage, ecc, bus, decoder, lsu, safety) |
+| O6/O7 `coverage` | line **95.9 % measured (376 of 392), 100 % with 16 reviewed waivers**; toggle **96.2 %**; functional **100 % of 66** (incl. the new `cp_flt_e2e`) — see below for how the toggle got there |
+| O8 `gate` (yosys netlist, zero delay) | all pass: `tb_alu`, `tb_multdiv`, `tb_ecc`, `tb_gate_fsm` 42 encodings, `fsm-apb` 17, `fsm-cdriscv_lsu` 8, `fsm-cdriscv_mbist` 16, `fsm-cdriscv_ams_if` 4, `fsm-cdriscv_core` 8, `gate-subsys` four programs |
+| O8 `gate-sdf` / `gate-arch` (placed E2E netlist, OpenROAD SDF, typ, 40 ns clock) | smoke **PASS after 301 cycles** — the zero-delay `gate-subsys` count exactly; **12 of 12 arch tests pass, signatures match Spike** (add/sub/xor/sltu/jalr/lw-align/sw-align/mul/div/misalign-lh/ebreak/Fencei); annotation clean after the filter below, 0 SDF errors |
+| `sta` (as-synthesised, informational) | ran; hold worst +0.184 ns |
+| `fmax` (OpenROAD placement of the E2E netlist) | reg2reg worst setup slack **+13.90 ns** at the 40 ns constraint (→ 38.3 MHz), in2reg +11.38, reg2out +7.44 — placement-estimated, not signoff |
+| O9 `fi FI_RUNS=2600`, four workloads | A 1 832 detected / 768 silent-ok; B 2 026 / 574; C 1 945 / 655; D 1 955 / 645 — **0 SDC, 0 latent, 0 hang in 10 400 upsets** |
+| `fi-e2e` (new) | **400 of 400 wire-bit transients detected**, 0 silent, 0 SDC, median 4 cycles, worst 21 |
+| FMEDA | recomputed from the E2E netlist: **SPFM 99.56 %, LFM 91.27 %, residual 1.03 FIT** (was 99.63 / 91.42 / 0.87 pre-E2E, 5 658 flops) |
+
+**O2, this time in three hours.** V40's billion took fifty-five
+sequential eight-minute batches overnight. `random_regress.py` already
+had `--start`, so six runners with disjoint seed ranges (1 000 000 +
+6 000·k, 5 600 seeds each, `--count 800 --loops 40` ≈ 30 k
+instructions per program) shared the eight cores with the
+fault-injection campaign and finished within twenty seconds of each
+other: 167.6 M instructions each, 1 005 665 490 in total, every one of
+the 33 600 programs matching Spike on PC, instruction, register and
+memory writes. Distinct seeds matter: a batch loop that re-ran the
+same 500 seeds would report a billion instructions of the same
+programs, which is not the same evidence.
+
+**E2E measured, not argued (`fi-e2e`).** Variant 2's systematic sweep
+was ported: every wire bit of the two protected TCM links — D-TCM write
+request {data, addr, chk, we} 72 bits, D-TCM read address 32, data
+read response {data, chk, chk_valid} 40, fetch response 40, byte
+enables 4 — forced for exactly one clock on the first live beat after
+a seeded cycle, twice each (the be eight times), under workload C's
+dense sub-word traffic. `tb_fi` got the five traffic-qualified targets
+(ids 34–38, matching variant 2's so the two sweeps read alike),
+`fi_campaign.py` the `--sweep T:NBITS[:REPS]` mode, and the random
+campaigns keep drawing from the legacy 27 targets so their rows stay
+comparable across phases. One thing done differently from variant 2:
+the data-response target is qualified on a *read* response
+(`u_e2e_data.pend_q && !we_q`). Unqualified, 43 of 80 response
+injections landed on write-response strobes, which carry no checked
+payload — silent by construction, and variant 2's sweep reports 41
+such "architecturally silent" runs. Qualified, the sweep is **400 of
+400 detected**: every bit of the link that can carry a checked value
+is caught, and the `chk_valid` flip — which turns an unchecked beat
+into a checked one — is caught too. Zero SDC is the acceptance
+criterion; median latency 4 cycles, worst 21 (a be flip on a beat the
+workload reads back late).
+
+**Coverage: the toggle metric fell to 93.9 % and was brought back by
+stimulus.** The first re-run read line 96.2 % / toggle **93.9 %** /
+functional 100 % — toggle below the ≥ 95 % criterion for the first
+time. Forty untoggled lines, and the largest classes were not E2E's:
+fourteen were the loader's ports, the boot multiplexer and the safety
+controller's `boot_fault`/`boot_retries` inputs — constant nets in
+every coverage bench, because every one of them folds the loader away
+(`BootEnable=0`, the signed-off configuration) while the subsystem's
+port list does not; seven were the E2E endpoints' `wr_err`/`rd_err`
+and the collector's `f_e2e`, which a fault-free simulation cannot
+toggle. Neither class was waived. `tb_cdriscv_boot` joined the
+coverage merge (`BootEnable=1`: clean 1-bit and quad boots, both
+again `+CORRUPT` for the retry/fault paths — the run that reaches
+`boot_fault`, `retries_q` and `S_FAULT`), and `tb_safety` grew the two
+E2E scenarios from variant 2 (a be flip on a live write beat, a
+corrupted read-response check word — both latch `FLT_E2E`, toggling
+the error paths). Toggle: 93.9 → 96.0 → **96.2 %** with the `/4`-clock
+boot build below. Two flow defects fixed on the way: Verilator 5.050's
+`--coverage` crashes on the flash model's `sclk`-domain state machine
+(`V3FsmDetect.cpp:1065`, as in variant 2), so the boot benches build
+with `--coverage-line --coverage-toggle --coverage-user`, which is
+everything the report reads; and the coverage recipe discarded every
+bench's output and grepped no verdict — a bench that had exited 0 on
+FAIL (they all do; `$finish` is `$finish`) would have fed the merge.
+The safety and boot runs now capture their logs and grep their
+verdicts, as variant 2's finding 17 required there.
+
+The line metric moved from 96.2 % of 372 to 95.9 % of 392: the loader
+is in the RTL set now, and four of its lines were uncovered. Two —
+the SPI divider's count-up branch, `div_q <= div_q + 1` — are dead at
+the chip's `BootSclkDiv=2` (the edge fires every run cycle) and
+reachable at `/4`, so the bench took a `BootSclkDiv` parameter and the
+flow builds a second binary at `-GBootSclkDiv=4` (boot_done at cycle
+25 104 against 12 752 at `/2`, the halved SPI clock). The
+other two — `default: state_q <= S_IDLE` and the SPI-fall phase
+case's `default: ;` — are W2a-shape upset-recovery arms (3-bit enums,
+7 of 8 values used, the absent phases exactly the ones in which
+`spi_fall` is false) and are waived under W2a with that argument. The
+waiver file's line numbers had drifted by two to six lines since the
+E2E and loader edits and were re-derived from the fresh annotated
+database: 16 waived, 16 uncovered, nothing left over.
+
+**FMEDA from the netlist that has E2E in it.** `scripts/fmeda.py` now
+carries the attribution rules and a `--netlist` recount, as variant
+2's does: every `sg13g2_dfrbpq_1` in `build/gate/cdriscv_subsys_pd.v`
+(the netlist `make fmax` places; placement adds no flops) attributed
+by its Q-net name, **5 736 flip-flops**, 5 200 named and 536
+synthesis-renamed, the sum asserted. The E2E endpoints are a row of
+their own (91 flops) with the sweep above behind it; the renamed flops
+are a row of their own too, carried at a diagnostic coverage of 0.90 —
+below every named row's, deliberately — where the 2026-08-25 edition
+did not count them at all (its 5 658 total was the placed count, its
+rows summed to 4 870). **SPFM 99.56 %, LFM 91.27 %, residual 1.03
+FIT**: the residual rose from 0.87 because 536 flops are now counted,
+not because E2E cost anything (its row is 0.017 FIT). What the refresh
+exposed, stated in the document rather than hidden in it: the
+unattributed row's assigned 0.90 is the one figure that can move a
+metric across a threshold — at 0.50 it is LFM **89.84 %**, below ASIL
+D — so naming those flops (most are the cores' pipeline and CSR state,
+which DCLS covers) is the next lever, and a `keep_hierarchy`
+synthesis pass would settle it. With the configuration parity removed
+the figure is LFM 86.0 % (was 83.4 %; the new row dilutes the
+mechanism subset).
+
+**Two flow defects that had been hiding behind a stale result.**
+`make fmax` — the placement run whose SDF `gate-sdf` and `gate-arch`
+simulate — had been broken twice over and nobody could tell:
+`verif/sta/openroad_fmax.tcl` still read the single 2048×64 SRAM LEF
+and libraries from before the V49 split into 2048×32 + 4096×8 macros,
+so OpenROAD stopped at `ORD-2013 master not found` on every run since;
+and its `write_sdf -corner default` names a scene that has not existed
+since `define_corners slow typ fast` (V45), so even with the LEFs
+right the script aborted one line after writing the netlist. Meanwhile
+`build/gate/cdriscv_subsys_pd_final.v` and `cdriscv_subsys_pd.sdf` of
+2026-08-25 — pre-split, pre-E2E — sat exactly where `gate-sdf` looks,
+and a `make gate-sdf` on this RTL was **running against them** when
+the mismatch was noticed: the run was stopped and the three stale
+files deleted before it could report anything, because a PASS from
+that netlist would have read as O8 on this one. None of it was
+visible in CI, which runs `gate`, `sta` and `fi` nightly but not
+`fmax` or `gate-sdf`. With those two fixed (the script reads the split
+macros' LEFs and three corners of libraries; the SDF is written for
+`typ`, with `slow` beside it) the SDF bench failed twice more, each
+time on another trace of the pre-split flow: `tb_sdf_subsys.vvp`
+compiled the 2048×64 behavioural model, so the split macros were
+missing modules; `sdf_sim_filter.py` passed the six macro CELL blocks
+through, whose escaped hierarchical instance names make Icarus
+discard the **whole** DELAYFILE (the run then simulated unannotated,
+as variant 2's finding 21 saw at chip level — the filter now drops
+them and counts them); the bench clocked at 20 ns, V42's target,
+against a netlist placed to the 40 ns constraint of V45; and the
+preload filled only the two data banks, never the 4096×8 check-bit
+macro, so every fetch was an uncorrectable ECC error and the bench
+could only TIMEOUT. Four stale traces of one change, each found by
+the previous one's fix, none reported by anything until the run was
+made — the same disease as variant 2's finding 20. `fmax` and
+`gate-sdf` are in the nightly now.
+
 ## Phase V54 — end-to-end bus protection added, loader fault reworked, V52 signoff re-opened (2026-09-08)
 
 End-to-end (E2E) bus protection was ported from `cdriscv-32s-20` and

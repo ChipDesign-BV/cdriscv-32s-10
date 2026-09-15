@@ -1,10 +1,12 @@
 # cdriscv-32s-10 verification plan
 
-> **Status, 2026-08-25: every objective O1–O9 is met** — see the
-> objective table below for each criterion's result, the README for
-> the one-line summary, and `verification_findings.md` (V0–V52) for
-> the evidence. The FMEDA runs on assumed failure rates; replacing
-> them with foundry data is the safety-case owner's first task.
+> **Status, 2026-09-14: every objective O1–O9 is met on the
+> E2E-inclusive RTL** (re-run in V55 after E2E re-opened the 2026-08-25
+> result) — see the objective table below for each criterion's result,
+> the README for the one-line summary, and `verification_findings.md`
+> (V0–V55) for the evidence. The FMEDA runs on assumed failure rates;
+> replacing them with foundry data is the safety-case owner's first
+> task.
 >
 > Scope: the design as it stands today — RV32IM_Zicsr_Zifencei, single or
 > dual core, with the subsystem of `cdriscv_subsys.sv`. Possible
@@ -21,14 +23,14 @@ Anything not on this list is not claimed.
 | # | Objective | Sign-off criterion |
 |---|-----------|--------------------|
 | O1 | The core implements the specified ISA | RISCOF run of `riscv-arch-test` for RV32I, M, Zicsr, Zifencei and the M-mode privileged tests passes, against Spike or the Sail model as reference — **met** (V36): 85 of 85 on the current suite, unmodified, built with `-mno-relax` |
-| O2 | The core matches a golden model on arbitrary code | ≥ 10^9 instructions of randomly generated code co-simulated against Spike with zero mismatches on retire PC, instruction, register write and memory access — **met** (V40): 1 008 435 332 instructions, 27 500 programs, zero mismatches |
+| O2 | The core matches a golden model on arbitrary code | ≥ 10^9 instructions of randomly generated code co-simulated against Spike with zero mismatches on retire PC, instruction, register write and memory access — **met** (V55 on the E2E RTL: 1 035 684 199 instructions, 35 600 programs, zero mismatches; V40: 1 008 435 332 pre-E2E) |
 | O3 | Every block behaves as its header comment says | Block level bench per block, all directed tests in section 5 pass — **met** |
 | O4 | Every safety mechanism fires when it should, and only then | Section 7 matrix complete: each mechanism has at least one test that triggers it and one that proves it stays quiet — **met**, including the V37 configuration parity |
 | O5 | No structural surprises for synthesis | Zero inferred latches, zero combinational loops, zero multiply-driven nets, lint clean with a documented waiver file — **met** |
-| O6 | Code coverage | 100 % statement and branch, ≥ 95 % toggle, with a reviewed waiver for each exclusion — **met** (V40): 96.2 % line (100 % with reviewed W2 waivers), 96.2 % toggle |
-| O7 | Functional coverage | The cross matrices in section 8 closed — **met**: 65 of 65 cover points hit |
-| O8 | The design behaves the same after synthesis | Gate level simulation of the smoke program and a subset of the arch tests, with SDF — **met** (V42/V43): smoke plus twelve arch tests on the placed netlist, SDF annotated, signatures bit-identical to Spike |
-| O9 | Diagnostic coverage is measured, not asserted | Fault injection campaign of section 9 complete, results feed the FMEDA — **met** (V44): [doc/fmeda.md](fmeda.md), SPFM 99.6 % / LFM 91.4 % under stated assumed failure rates, regenerable via `scripts/fmeda.py` |
+| O6 | Code coverage | 100 % statement and branch, ≥ 95 % toggle, with a reviewed waiver for each exclusion — **met** (V55): 95.9 % line (100 % with 16 reviewed W2 waivers), 96.2 % toggle, loader benches in the merge |
+| O7 | Functional coverage | The cross matrices in section 8 closed — **met**: 66 of 66 cover points hit (V55, `cp_flt_e2e` added) |
+| O8 | The design behaves the same after synthesis | Gate level simulation of the smoke program and a subset of the arch tests, with SDF — **met** (V55 on the E2E placed netlist; V42/V43 pre-E2E): smoke plus twelve arch tests, SDF annotated at the 40 ns signoff clock, signatures bit-identical to Spike |
+| O9 | Diagnostic coverage is measured, not asserted | Fault injection campaign of section 9 complete, results feed the FMEDA — **met** (V55): [doc/fmeda.md](fmeda.md), SPFM 99.56 % / LFM 91.27 % from the E2E netlist under stated assumed failure rates, regenerable via `scripts/fmeda.py` (`--netlist` asserts the populations) |
 
 O1–O7 are the gate for "may be used in a project". O8–O9 are the gate
 for "may be used in a safety context", together with the FMEDA that is

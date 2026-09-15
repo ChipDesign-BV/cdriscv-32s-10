@@ -4,10 +4,11 @@
 > use.**
 >
 > This document is a *draft outline* of a safety manual. Since it was
-> first written the position has moved: the O1–O7 verification gate is
-> met (2026-08-24), fault-injection campaigns have been run, diagnostic
-> coverage has been measured, and an FMEDA exists — SPFM 99.6 %, LFM
-> 91.4 % (V44, [fmeda.md](fmeda.md)).
+> first written the position has moved: the O1–O9 verification
+> objectives are met on the current, E2E-inclusive RTL (2026-09-14,
+> V55), fault-injection campaigns have been run, diagnostic coverage
+> has been measured, and an FMEDA exists — SPFM 99.56 %, LFM 91.27 %
+> ([fmeda.md](fmeda.md)).
 >
 > None of that is certification. The FMEDA rests on **assumed** base
 > failure rates, because no foundry FIT data exists for this design;
@@ -120,21 +121,25 @@ below — chief among them the foundry FIT data, a mission profile and
 common-cause analysis the FMEDA still needs — are what stand between
 "measured" and "qualified".
 
-> **E2E (SM11) was added after that objective run and the V52 signoff
-> (2026-09-08).** The O1–O9 results, the coverage/fault-injection/FMEDA
-> numbers, and the V52 GDS all describe the design *without* E2E. E2E is
-> functionally verified at block, safety and smoke level (its two block
-> benches, `make sim`/`make safety` clean with it always-on, mutation
-> 10/10), but the **full objective suite and the physical signoff have
-> not been re-run on the E2E-inclusive RTL**. Treat the current RTL as
-> "E2E implemented and block-verified; O-gate and signoff re-run
-> pending". See finding V54.
+> **E2E (SM11) was added after the first objective run and the V52
+> signoff (2026-09-08); the objective suite was re-run on the
+> E2E-inclusive RTL on 2026-09-14 (finding V55)** — O1–O9 every one,
+> including a fresh 10⁹-instruction co-simulation, coverage with the
+> loader's benches in the merge, 10 400 random upsets plus a 400-upset
+> sweep of the E2E links (400 of 400 detected), and the FMEDA
+> recomputed from the E2E netlist. What still describes the design
+> *without* E2E is the V52 GDS: the physical signoff has not been
+> re-run and the full-chip harden is deferred.
 
-* The FMEDA exists ([fmeda.md](fmeda.md)): SPFM 99.6 %, LFM 91.4 %,
-  residual 0.87 FIT — **under assumed failure rates**. The gap that
-  remains is the data, not the analysis: foundry FIT figures, a
-  mission profile, and common-cause analysis for the lockstep pair,
-  per the handoff checklist in that document.
+* The FMEDA exists ([fmeda.md](fmeda.md), recomputed 2026-09-14 from
+  the E2E netlist): SPFM 99.56 %, LFM 91.27 %, residual 1.03 FIT —
+  **under assumed failure rates**. The gap that remains is the data,
+  not the analysis: foundry FIT figures, a mission profile, and
+  common-cause analysis for the lockstep pair, per the handoff
+  checklist in that document — and one assigned figure inside the
+  table: the 536 synthesis-renamed flops are carried at a diagnostic
+  coverage of 0.90, and at 0.50 LFM would be 89.84 %, below the ASIL D
+  line. Naming those flops is the next measurement.
 * **Diagnostic latency has been measured** for the fault classes that
   are detected: median 4 cycles, worst observed 69 — 2.76 µs at the 25 MHz target
   — over 734 detections in a 2 700-injection campaign. The fast end is

@@ -20,6 +20,7 @@
     .equ SFT_STATUS,   0x00
     .equ SFT_ENABLE,   0x04
     .equ SFT_CTRL,     0x14
+    .equ SFT_INJECT,   0x18
     .equ SFT_RAW,      0x20
     .equ SFT_SELFTEST, 0x24
 
@@ -33,6 +34,7 @@
     .equ FLT_DTCM_ECC_COR, 3
     .equ FLT_DTCM_ECC_UNC, 4
     .equ FLT_SW,          11
+    .equ FLT_E2E,         14
 
     .section .text.init, "ax"
     .global _start
@@ -228,6 +230,34 @@ _start:
      */
     li   t0, -1
     sw   t0, SFT_ENABLE(s0)
+
+    /* ---- 10: the E2E fault latches through INJECT (V55) --------------
+     * The E2E checkers compare check bits carried with every TCM
+     * transfer against a locally recomputed pair, so a fault-free
+     * simulation can never make one fire: there is nothing on the path
+     * to disagree with.  What software CAN reach is the fault
+     * collection: INJECT pulses the FLT_E2E bit exactly where the
+     * checker outputs arrive, and the sticky status, the W1C and the
+     * reaction path behind bit 14 are all real.  The checker's own
+     * detection is proven by block-e2e-link and the fi-e2e sweep.
+     */
+    li   t0, (1 << FLT_E2E)
+    sw   t0, SFT_INJECT(s0)
+    nop
+    nop
+    nop
+    nop
+    lw   t0, SFT_STATUS(s0)
+    srli t1, t0, FLT_E2E
+    andi t1, t1, 1
+    li   a0, 10
+    beqz t1, fail
+
+    li   t0, -1                 /* W1C: leave the status clean */
+    sw   t0, SFT_STATUS(s0)
+    lw   t0, SFT_STATUS(s0)
+    li   a0, 11
+    bnez t0, fail
 
 pass:
     li   t0, EXIT_REG

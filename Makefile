@@ -36,7 +36,7 @@ OBJDUMP    := $(CROSS)objdump
 ARCH       := rv32im_zicsr_zifencei
 ABI        := ilp32
 
-.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-e2e block-e2e-link block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi cosim cosim-iverilog cosim-stall cosim-random
+.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-e2e block-e2e-link block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi fi-e2e cosim cosim-iverilog cosim-stall cosim-random
 
 all: lint
 
@@ -522,9 +522,44 @@ $(BUILD)/obj_sftycov/tb_safety_cov: $(RTL) verif/safety/tb_safety.sv $(COVER_SV)
 	  --top-module tb_safety -o tb_safety_cov -Mdir $(BUILD)/obj_sftycov \
 	  $(RTL) verif/safety/tb_safety.sv $(COVER_SV)
 
+# The QSPI boot bench, BootEnable=1 (V55).  Every other coverage bench
+# folds the loader away, so the loader's ports, the boot multiplexer
+# and the safety controller's boot_fault / boot_retries inputs are
+# constant nets no stimulus can toggle -- 14 of the 40 untoggled lines
+# when the toggle metric read 93.9 %.  Exercised, not waived: a clean
+# 1-bit and quad boot, and both again +CORRUPT for the retry / fault
+# paths.  Not --coverage: Verilator 5.050's FSM-coverage pass crashes
+# on the flash model's sclk-domain machine (V3FsmDetect internal
+# error); line + toggle + user is everything the report reads.  The
+# loader lines themselves stay outside the RTL line metric, which is
+# the signed-off BootEnable=0 configuration's.
+$(BUILD)/obj_bootcov/tb_boot_cov: $(RTL) verif/models/cdriscv_spi_norflash_model.sv \
+                                  tb/tb_cdriscv_boot.sv $(COVER_SV) | $(BUILD)
+	$(VERILATOR) --binary --timing -sv --timescale 1ns/1ps \
+	  --coverage-line --coverage-toggle --coverage-user \
+	  -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+	  -Wno-SYNCASYNCNET -Wno-WIDTHTRUNC -Wno-MULTIDRIVEN \
+	  --top-module tb_cdriscv_boot -o tb_boot_cov -Mdir $(BUILD)/obj_bootcov \
+	  $(RTL) verif/models/cdriscv_spi_norflash_model.sv tb/tb_cdriscv_boot.sv $(COVER_SV)
+
+# The same bench at BootSclkDiv=4: the loader's divider counts up only
+# when HalfDiv > 1, so at the chip's /2 setting that branch can never
+# execute; a /4 build reaches it with the same image and PASS criterion.
+$(BUILD)/obj_bootcov4/tb_boot_cov4: $(RTL) verif/models/cdriscv_spi_norflash_model.sv \
+                                    tb/tb_cdriscv_boot.sv $(COVER_SV) | $(BUILD)
+	$(VERILATOR) --binary --timing -sv --timescale 1ns/1ps \
+	  --coverage-line --coverage-toggle --coverage-user \
+	  -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+	  -Wno-SYNCASYNCNET -Wno-WIDTHTRUNC -Wno-MULTIDRIVEN \
+	  -GBootSclkDiv=4 \
+	  --top-module tb_cdriscv_boot -o tb_boot_cov4 -Mdir $(BUILD)/obj_bootcov4 \
+	  $(RTL) verif/models/cdriscv_spi_norflash_model.sv tb/tb_cdriscv_boot.sv $(COVER_SV)
+
 coverage: $(BUILD)/obj_cov/tb_cosim_cov $(BUILD)/obj_syscov/tb_sys_cov \
           $(BUILD)/obj_sftycov/tb_safety_cov \
           $(BUILD)/obj_cmcov/tb_clkmon_cov \
+          $(BUILD)/obj_bootcov/tb_boot_cov $(BUILD)/obj_bootcov4/tb_boot_cov4 \
+          $(BUILD)/boot_flash.hex $(BUILD)/boot_flash_quad.hex \
           $(BUILD)/cosim_isa.hex $(BUILD)/safety_test.hex \
           $(BUILD)/periph_test.hex $(BUILD)/reaction_test.hex \
           $(BUILD)/trap_test.hex $(BUILD)/ams_test.hex \
@@ -575,8 +610,32 @@ coverage: $(BUILD)/obj_cov/tb_cosim_cov $(BUILD)/obj_syscov/tb_sys_cov \
 	  mv coverage.dat $(BUILD)/cov/cov_regwalk.dat
 	@./$(BUILD)/obj_cmcov/tb_clkmon_cov > /dev/null 2>&1 && \
 	  mv coverage.dat $(BUILD)/cov/cov_clkmon.dat
+	@# The bench's $finish exits 0 on FAIL too, so the verdict is grepped
+	@# (variant 2's finding 17): a failing bench must not feed the merge.
 	@./$(BUILD)/obj_sftycov/tb_safety_cov +ITCM_HEX=$(BUILD)/safety_test.hex \
-	  > /dev/null 2>&1 && mv coverage.dat $(BUILD)/cov/cov_safetybench.dat
+	  > $(BUILD)/cov/safetybench_cov.log 2>&1 && \
+	  grep -q "\[tb_safety\] PASS" $(BUILD)/cov/safetybench_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_safetybench.dat
+	@./$(BUILD)/obj_bootcov/tb_boot_cov +FLASH_HEX=$(BUILD)/boot_flash.hex \
+	  > $(BUILD)/cov/boot_cov.log 2>&1 && \
+	  grep -q "\[TB\] PASS" $(BUILD)/cov/boot_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_boot.dat
+	@./$(BUILD)/obj_bootcov/tb_boot_cov +FLASH_HEX=$(BUILD)/boot_flash_quad.hex \
+	  > $(BUILD)/cov/boot_quad_cov.log 2>&1 && \
+	  grep -q "\[TB\] PASS" $(BUILD)/cov/boot_quad_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_boot_quad.dat
+	@./$(BUILD)/obj_bootcov/tb_boot_cov +FLASH_HEX=$(BUILD)/boot_flash.hex +CORRUPT \
+	  > $(BUILD)/cov/boot_fault_cov.log 2>&1 && \
+	  grep -q "PASS corrupt-image" $(BUILD)/cov/boot_fault_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_boot_fault.dat
+	@./$(BUILD)/obj_bootcov/tb_boot_cov +FLASH_HEX=$(BUILD)/boot_flash_quad.hex +CORRUPT \
+	  > $(BUILD)/cov/boot_fault_quad_cov.log 2>&1 && \
+	  grep -q "PASS corrupt-image" $(BUILD)/cov/boot_fault_quad_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_boot_fault_quad.dat
+	@./$(BUILD)/obj_bootcov4/tb_boot_cov4 +FLASH_HEX=$(BUILD)/boot_flash.hex \
+	  > $(BUILD)/cov/boot_div4_cov.log 2>&1 && \
+	  grep -q "\[TB\] PASS" $(BUILD)/cov/boot_div4_cov.log && \
+	  mv coverage.dat $(BUILD)/cov/cov_boot_div4.dat
 	verilator_coverage --write $(BUILD)/cov/merged.dat $(BUILD)/cov/cov_*.dat
 	@rm -rf $(BUILD)/cov/ann_line $(BUILD)/cov/ann_tog
 	verilator_coverage --filter-type line --annotate $(BUILD)/cov/ann_line \
@@ -882,10 +941,12 @@ $(BUILD)/tb_cosim_arch.vvp: $(RTL) verif/core/tb_cosim.sv | $(BUILD)
 
 # ------------------------------------------------- gate + SDF (O8)
 # The placed-and-repaired netlist with its own SDF, real cell and
-# estimated interconnect delays, at the 20 ns target clock.  The
+# estimated interconnect delays, at the 40 ns signoff clock.  The
 # netlist and SDF come out of `make fmax`; the cell models keep their
 # specify blocks (only the ifnone paths Icarus rejects are removed),
-# and the SRAM macros simulate as the vendor behavioural model.
+# and the SRAM macros simulate as the vendor behavioural model -- the
+# split 2048x32 + 4096x8 pair since V49; the single 2048x64 this rule
+# compiled until V55 was the third stale trace of the pre-split flow.
 # `=` not `:=`: SRAM_PDK is defined further down in the fmax section,
 # and an immediate assignment here would capture it empty.
 SRAM_V = $(SRAM_PDK)/verilog
@@ -900,7 +961,8 @@ $(BUILD)/gate/tb_sdf_subsys.vvp: $(BUILD)/gate/cdriscv_subsys_pd_final.v \
 	$(IVERILOG) -g2012 -gspecify -ginterconnect -DFUNCTIONAL -o $@ -s tb_sdf_subsys \
 	  $(BUILD)/gate/cdriscv_subsys_pd_final.v \
 	  $(BUILD)/gate/sg13g2_cells_sdf.v $(GATE_UDP) \
-	  $(SRAM_V)/RM_IHPSG13_1P_2048x64_c2_bm_bist.v \
+	  $(SRAM_V)/RM_IHPSG13_1P_2048x32_c2_bm_bist.v \
+	  $(SRAM_V)/RM_IHPSG13_1P_4096x8_c3_bm_bist.v \
 	  $(SRAM_V)/RM_IHPSG13_1P_core_behavioral_bm_bist.v \
 	  verif/gate/tb_sdf_subsys.sv
 
@@ -1034,7 +1096,25 @@ $(BUILD)/tb_fi.vvp: $(RTL) verif/fi/tb_fi.sv | $(BUILD)
 # detected / silent-ok / silent data corruption / hang.  The SDC count
 # is the one that matters: a fault that changes the result and reports
 # nothing is what a safety mechanism exists to prevent.
-fi: fi-arith fi-trap fi-mem
+fi: fi-arith fi-trap fi-mem fi-e2e
+
+# E2E (V55): every wire bit of the two protected TCM links, forced for
+# one clock on a live beat, under workload C's dense sub-word traffic.
+# A systematic sweep, not a random draw: the point is that no bit of
+# the link is undetectable, and a random campaign cannot say that.
+# 72 write-request + 32 read-address + 40 data-response + 40 fetch-
+# response bits, twice each, and the four byte enables eight times.
+# Only the read links and the D-TCM write link exist to sweep: the
+# I-TCM write link is not separately swept (no workload writes code,
+# and the slave endpoint is the same module proven by block-e2e-link).
+fi-e2e: $(BUILD)/tb_fi.vvp $(BUILD)/fi_workload_mem.hex $(BUILD)/dtcm_zero.hex
+	$(PYTHON) scripts/fi_campaign.py --seed $(FI_SEED) \
+	  --hex $(BUILD)/fi_workload_mem.hex --golden 02576cb6 \
+	  --golden-cfg 00000001_ffffffff_ff000134 \
+	  --sweep 34:72:2,35:32:2,36:40:2,37:40:2,38:4:8 \
+	  --ibase 43 --ispan 31 --min-cycle 150 --max-cycle 2300 \
+	  --name "E2E links: every wire bit, live traffic (workload C)" \
+	  | tee $(BUILD)/fi_campaign_e2e.txt
 
 # --golden-cfg is the safety configuration signature from a fault-free
 # run.  Without it a fault that switches a detector off is reported as

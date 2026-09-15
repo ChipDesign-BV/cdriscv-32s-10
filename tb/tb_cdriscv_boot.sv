@@ -27,7 +27,12 @@
 `default_nettype none
 `timescale 1ns/1ps
 
-module tb_cdriscv_boot;
+module tb_cdriscv_boot #(
+    // sclk = clk / BootSclkDiv.  The chip builds with the default 2; the
+    // coverage flow also builds a /4 bench (-GBootSclkDiv=4) because the
+    // divider's count-up branch is dead at /2 -- exercised, not waived.
+    parameter int unsigned BootSclkDiv = 2
+);
 
   localparam time ClkPeriod    = 10ns;    // 100 MHz system clock
   localparam time RefClkPeriod = 1000ns;  // 1 MHz reference clock
@@ -85,7 +90,8 @@ module tb_cdriscv_boot;
       .ItcmWords  (4096),
       .DtcmWords  (4096),
       .MbistAuto  (1'b0),
-      .BootEnable (1'b1)      // the point of this bench
+      .BootEnable (1'b1),     // the point of this bench
+      .BootSclkDiv (BootSclkDiv)
   ) dut (
       .clk_i          (clk),
       .rst_ni         (rst_n),

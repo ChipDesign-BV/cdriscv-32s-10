@@ -426,7 +426,18 @@ jobs:
       - name: Static timing
         run: make sta
 
-      - name: Fault injection, all workloads
+      # fmax and the SDF smoke were not in the nightly, which is how
+      # `make fmax` stayed broken from the V49 macro split to V55 with
+      # a pre-split placed netlist and SDF in build/gate/ ready to be
+      # reused by gate-sdf.  A result that is never re-run is a result
+      # that can go stale unnoticed.
+      - name: Placement timing estimate (OpenROAD)
+        run: make fmax
+
+      - name: Gate level simulation with SDF (typ)
+        run: make gate-sdf
+
+      - name: Fault injection, all workloads incl. the E2E sweep
         run: make fi FI_RUNS=2600
 
       - uses: actions/upload-artifact@v4
