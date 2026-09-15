@@ -540,9 +540,10 @@ TCM ECC cannot see is caught and latches `FLT_E2E` (safety status bit
 14). It is **always on** — no parameter, no ports, transparent to
 integration — and a write-path mismatch does not gate the write, so bus
 timing is unchanged. It was added 2026-09-08, **after** the V52 signoff
-and the O1–O9 objective run: E2E is block/safety/smoke-verified, but the
-full objective suite and the physical signoff have not been re-run on
-the E2E-inclusive RTL (see `verification_findings.md` V54 and
+and the first O1–O9 objective run; the objective suite was re-run on
+the E2E-inclusive RTL in V55 (2026-09-14/15: all met, including a
+400-of-400 sweep of the link wires), while the physical signoff has
+not been (see `verification_findings.md` V54/V55 and
 `safety_manual.md` §5).
 
 ## 10. Verifying your integration
