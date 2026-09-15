@@ -163,6 +163,15 @@ the previous one's fix, none reported by anything until the run was
 made — the same disease as variant 2's finding 20. `fmax` and
 `gate-sdf` are in the nightly now.
 
+**CI confirmation (run #84, dispatched on `852f659`; #85, the push).**
+Every job green. The nightly job — `gate`, `sta`, the new `fmax`
+(OpenROAD placement) and `gate-sdf` steps, then `fi FI_RUNS=2600`
+with the E2E sweep — completed in **1 h 34 min** of the 360-minute
+ceiling; the five push jobs in 2–4 minutes each, coverage with the
+three boot-bench builds included. The first nightly ever to have run
+the placement and the SDF simulation, which is the point: a step that
+CI never runs is a step that can stay broken for six weeks.
+
 ## Phase V54 — end-to-end bus protection added, loader fault reworked, V52 signoff re-opened (2026-09-08)
 
 End-to-end (E2E) bus protection was ported from `cdriscv-32s-20` and
