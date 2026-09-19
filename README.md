@@ -51,7 +51,8 @@ things.
 >
 > **The full plan, O1–O9, has a result for every objective on the
 > current RTL.** The FMEDA ([doc/fmeda.md](doc/fmeda.md), recomputed
-> from the E2E netlist): SPFM 99.56 %, LFM 91.27 %, residual 1.03 FIT
+> from the E2E netlist, every flop but 17 attributed to its block):
+> SPFM 99.57 %, LFM 91.14 %, residual 1.02 FIT
 > — **under assumed failure rates**, clearly labeled,
 > that a real safety case must replace with foundry data. An
 > architectural statement, not a certification: no ISO 26262 or
@@ -262,7 +263,7 @@ V0–V55, newest first). Summary, one line per area:
 | Fault injection | **0 SDC, 0 hangs, 0 latent** | 10 400 classified upsets over four workloads on the E2E RTL (V55) plus the 400-upset E2E link sweep, **400 of 400 detected**; latent was **46.4 %** before the V37 configuration parity, zero after, detection median 2–4 cycles; `make fi` (incl. `fi-e2e`) |
 | Timing | **closed at 25 MHz, 3 corners — pre-E2E GDS** | setup **+2.698 ns** (slow), hold **+0.133 ns** (fast), TNS 0, LVS matches uniquely (V52, before E2E); the E2E netlist's placement estimate is reg2reg **+13.9 ns** at 40 ns (`make fmax`, V55 — the target was broken from V49 to V55, see the findings); the re-harden is deferred |
 | Gate level | **O8 met, on the E2E netlist** | zero-delay netlist all pass (blocks, 5 FSM recoveries, subsystem programs); smoke + 12 architectural tests on the placed E2E netlist with OpenROAD SDF cell delays at the 40 ns signoff clock, signatures bit-exact vs Spike (V55; V42/V43 were pre-E2E); `make gate gate-sdf gate-arch` — the SDF path had four stale pre-split traces, all found and fixed in V55 |
-| FMEDA | **SPFM 99.56 % / LFM 91.27 %, 1.03 FIT** | recomputed from the E2E netlist (5 736 flops, `scripts/fmeda.py --netlist` asserts the count), E2E row measured by the sweep, under stated assumed failure rates (V55). One assigned figure can move LFM across the ASIL D line — the 536 synthesis-renamed flops carried at dc 0.90 (89.84 % at 0.50); see [doc/fmeda.md](doc/fmeda.md) §5 |
+| FMEDA | **SPFM 99.57 % / LFM 91.14 %, 1.02 FIT** | recomputed from the E2E netlist (5 736 flops, `scripts/fmeda.py --netlist` asserts the count), E2E row measured by the sweep, under stated assumed failure rates (V55/V56). **No row rests on an assigned attribution**: the 536 synthesis-renamed flops are attributed to their blocks from yosys' `src`, leaving 17 (0.30 %) whose worst case — dc 0.00 — still gives LFM 90.79 %, above ASIL D ([doc/fmeda.md](doc/fmeda.md) §2a) |
 | CI | **green** | [verify.yml](.github/workflows/verify.yml): full gate on every push; gate-level, `sta`, `fmax`, SDF smoke and fault injection (incl. the E2E sweep) nightly |
 | QSPI boot loader (optional) | **verified, off by default** | block bench 41 checks, end-to-end boot 1-bit + quad, corrupt-image sticky-fault path, mutation 10/10 (V53/V54); `make block-qspi bootsim bootsim-fault`. `BootEnable=0` folds it away completely |
 | E2E bus protection (always-on) | **verified and measured (V54/V55)** | check bits over {payload, address, byte-enables} on both TCM links; `make block-e2e` 154 096 checks / `block-e2e-link` 12 024 checks; `fi-e2e` sweeps every wire bit of both links on live beats — 400 of 400 detected, median 4 cycles; two system-level scenarios in `tb_safety`; its own FMEDA row |

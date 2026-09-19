@@ -30,7 +30,7 @@ Anything not on this list is not claimed.
 | O6 | Code coverage | 100 % statement and branch, ≥ 95 % toggle, with a reviewed waiver for each exclusion — **met** (V55): 95.9 % line (100 % with 16 reviewed W2 waivers), 96.2 % toggle, loader benches in the merge |
 | O7 | Functional coverage | The cross matrices in section 8 closed — **met**: 66 of 66 cover points hit (V55, `cp_flt_e2e` added) |
 | O8 | The design behaves the same after synthesis | Gate level simulation of the smoke program and a subset of the arch tests, with SDF — **met** (V55 on the E2E placed netlist; V42/V43 pre-E2E): smoke plus twelve arch tests, SDF annotated at the 40 ns signoff clock, signatures bit-identical to Spike |
-| O9 | Diagnostic coverage is measured, not asserted | Fault injection campaign of section 9 complete, results feed the FMEDA — **met** (V55): [doc/fmeda.md](fmeda.md), SPFM 99.56 % / LFM 91.27 % from the E2E netlist under stated assumed failure rates, regenerable via `scripts/fmeda.py` (`--netlist` asserts the populations) |
+| O9 | Diagnostic coverage is measured, not asserted | Fault injection campaign of section 9 complete, results feed the FMEDA — **met** (V55/V56): [doc/fmeda.md](fmeda.md), SPFM 99.57 % / LFM 91.14 % from the E2E netlist under stated assumed failure rates, every flop but 17 attributed to its block, regenerable via `scripts/fmeda.py` (`--netlist` asserts the populations) |
 
 O1–O7 are the gate for "may be used in a project". O8–O9 are the gate
 for "may be used in a safety context", together with the FMEDA that is

@@ -36,7 +36,7 @@ OBJDUMP    := $(CROSS)objdump
 ARCH       := rv32im_zicsr_zifencei
 ABI        := ilp32
 
-.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-e2e block-e2e-link block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fi fi-e2e cosim cosim-iverilog cosim-stall cosim-random
+.PHONY: all lint lint-tb sim sw synth ecc clean bootsim bootsim-fault block block-alu block-ecc block-multdiv block-qspi block-e2e block-e2e-link block-tcm block-if-equiv safety safety-sw safety-bench periph reaction trap ams regwalk formal formal-if formal-ecc formal-bus formal-dec formal-lsu formal-safety coverage fmeda fi fi-e2e cosim cosim-iverilog cosim-stall cosim-random
 
 all: lint
 
@@ -1047,6 +1047,29 @@ $(BUILD)/gate/cdriscv_subsys_sta_fix.v: $(BUILD)/gate/cdriscv_subsys_sta.v
 # stays as the quick unbuffered check; this is the number to quote.
 SRAM_PDK  ?= $(dir $(patsubst %/,%,$(GATE_PDK)))sg13g2_sram
 OPENROAD  ?= /foss/tools/openroad/bin/openroad
+
+# The same netlist with yosys' attributes kept.  `write_verilog -noattr`
+# drops the `src` attribute, and `src` -- the RTL file and line the
+# register was written on -- is the only thing that still says which
+# register a flop implements once synthesis has renamed its net.  536 of
+# 5 736 flops came out as `_NNNN_` and used to sit in an "unattributed"
+# FMEDA row at an assigned diagnostic coverage; with `src` they attribute
+# to their real block (V56).  Same script, same options, so the netlists
+# are identical cell for cell -- scripts/fmeda.py asserts the flop counts
+# match before it believes either.
+$(BUILD)/gate/cdriscv_subsys_fmeda.v: $(RTL) verif/gate/cdriscv_tcm_macro.sv | $(BUILD)/gate
+	$(YOSYS) -p "plugin -i slang; \
+	  read_slang --top $(TOP) verif/gate/cdriscv_tcm_macro.sv $(GATE_RTL); \
+	  connect -set boot_addr_i 32'h00000000; \
+	  synth -top $(TOP) -flatten; \
+	  dfflibmap -liberty $(GATE_LIB); \
+	  abc -liberty $(GATE_LIB); \
+	  opt_clean -purge; \
+	  write_verilog $@" -l $(BUILD)/gate/subsys_fmeda_synth.log
+
+fmeda: $(BUILD)/gate/cdriscv_subsys_fmeda.v $(BUILD)/gate/cdriscv_subsys_pd.v
+	$(PYTHON) scripts/fmeda.py --netlist
+	$(PYTHON) scripts/fmeda.py
 
 $(BUILD)/gate/cdriscv_subsys_pd.v: $(RTL) verif/gate/cdriscv_tcm_macro.sv | $(BUILD)/gate
 	$(YOSYS) -p "plugin -i slang; \

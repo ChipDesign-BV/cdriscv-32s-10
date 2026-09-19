@@ -7,7 +7,7 @@
 > first written the position has moved: the O1–O9 verification
 > objectives are met on the current, E2E-inclusive RTL (2026-09-14,
 > V55), fault-injection campaigns have been run, diagnostic coverage
-> has been measured, and an FMEDA exists — SPFM 99.56 %, LFM 91.27 %
+> has been measured, and an FMEDA exists — SPFM 99.57 %, LFM 91.14 %
 > ([fmeda.md](fmeda.md)).
 >
 > None of that is certification. The FMEDA rests on **assumed** base
@@ -132,14 +132,16 @@ common-cause analysis the FMEDA still needs — are what stand between
 > re-run and the full-chip harden is deferred.
 
 * The FMEDA exists ([fmeda.md](fmeda.md), recomputed 2026-09-14 from
-  the E2E netlist): SPFM 99.56 %, LFM 91.27 %, residual 1.03 FIT —
+  the E2E netlist): SPFM 99.57 %, LFM 91.14 %, residual 1.02 FIT —
   **under assumed failure rates**. The gap that remains is the data,
   not the analysis: foundry FIT figures, a mission profile, and
   common-cause analysis for the lockstep pair, per the handoff
-  checklist in that document — and one assigned figure inside the
-  table: the 536 synthesis-renamed flops are carried at a diagnostic
-  coverage of 0.90, and at 0.50 LFM would be 89.84 %, below the ASIL D
-  line. Naming those flops is the next measurement.
+  checklist in that document. What used to sit here as a second gap —
+  536 flip-flops carried in an "unattributed" row whose assigned
+  diagnostic coverage decided which side of the ASIL D line LFM fell on
+  — is closed: they are attributed to their blocks from the netlist
+  itself, and the 17 that remain (0.30 %) give LFM 90.79 % even at a
+  diagnostic coverage of zero ([fmeda.md](fmeda.md) §2a).
 * **Diagnostic latency has been measured** for the fault classes that
   are detected: median 4 cycles, worst observed 69 — 2.76 µs at the 25 MHz target
   — over 734 detections in a 2 700-injection campaign. The fast end is

@@ -5,6 +5,69 @@ first. Each finding records what was wrong, how it was found, and what
 was done about it. See `verification_plan.md` for the plan these come
 from.
 
+## Phase V56 — every flip-flop attributed, and a 90 % harden on a die as wide as the SRAMs (2026-09-18)
+
+Two things, both asked for directly: close the FMEDA's last assigned
+figure, and harden the subsystem at 90 % utilisation on a die whose
+width is the SRAM macro row with minimal margin.
+
+### The 536 unattributed flops were never unattributable
+
+V55 counted all 5 736 flip-flops of the E2E netlist and attributed them
+by the RTL instance path their Q-net carries after flattening. 536 had
+no such name: synthesis renames the net of any register it merges,
+re-encodes or re-drives, and `write_verilog` prints those as `_NNNN_`.
+They went into an "unattributed" row at an assigned diagnostic coverage
+of 0.90 — and that was the one figure in the table able to move a
+metric across a threshold. At 0.50 it put LFM at 89.84 %, below the
+ASIL D line, which is why V55 flagged it as the next lever.
+
+The first instinct was to stop synthesis from renaming them. It does
+not work: `-nofsm -noshare` recovers nine of the 536. The names are not
+lost to FSM extraction or resource sharing, and chasing them through
+the opt passes would trade netlist quality for bookkeeping.
+
+**yosys already records what is needed, and the flow was throwing it
+away.** Every cell carries a `src` attribute — the RTL file and line of
+the register it implements — which survives every rename, and
+`write_verilog -noattr` drops it. So the flow now writes the same
+netlist twice: `cdriscv_subsys_pd.v` for the tools and
+`cdriscv_subsys_fmeda.v` with attributes for this analysis, from one
+yosys script whose only difference is the attribute printing. Both hold
+5 736 `sg13g2_dfrbpq_1` instances and `scripts/fmeda.py --netlist`
+asserts that before it believes either — the netlists are identical
+cell for cell, which is the only thing that makes counting one and
+placing the other legitimate.
+
+Attribution is then two stages. The Q-net's instance path where there
+is one. Otherwise the row that the *other* flops from the same source
+line agree on, since a source line is one register in one module and
+its siblings do have names. 519 of the 536 resolve that way. 107 of
+those need a dominance rule: `safety_ctrl.sv:163` has 115 named
+siblings in the safety controller and exactly one that flattening
+renamed into lockstep wiring, so the row is settled at 99.1 % and the
+threshold is written down (90 %) rather than left implicit.
+
+**17 flops remain — 0.30 %.** Eight come from `cfg_parity.sv:48`, whose
+eight instances genuinely sit in eight different blocks with no
+majority; nine carry no `src` at all. They keep a row of their own with
+no safe share and the lowest diagnostic coverage in the table.
+
+What moved: 3 299 → 3 363 in the core pair, 200 → 307 in the safety
+controller, 9 → 104 in the watchdog (its configuration-parity fold),
+365 → 505 in the AMS interface, 149 → 197 in the clock monitor, 97 →
+162 in the timer. **SPFM 99.57 %, LFM 91.14 %, residual 1.02 FIT** —
+LFM a tenth of a point below V55's, because those flops moved *into*
+mechanism rows where they count against the latent metric rather than
+sitting in a row of their own. The number to keep is the sensitivity,
+not the headline: **at dc 0.00 for the 17 unresolved flops the metrics
+are SPFM 99.56 %, LFM 90.79 % — still above ASIL D.** No row of this
+FMEDA now rests on a figure that was assigned rather than measured,
+which is what the item was flagged for. (With the configuration parity
+removed the figure is LFM 82.9 %, against 86.0 % before: the
+attribution moves ~350 flops into the parity-protected rows, so V37's
+mechanism is worth *more* than the old table showed, not less.)
+
 ## Phase V55 — the objective suite re-run on the E2E-inclusive RTL (2026-09-14)
 
 V54 added E2E always-on and said plainly that every objective number

@@ -8,9 +8,10 @@
 # each row of the tables says which:
 #
 #   MEASURED  -- element populations counted from the E2E-inclusive
-#                synthesised netlist (build/gate/cdriscv_subsys_pd.v,
-#                V55: `python3 scripts/fmeda.py --netlist` re-derives
-#                every row from it and fails on drift), and diagnostic
+#                synthesised netlist (build/gate/cdriscv_subsys_fmeda.v,
+#                the same netlist with yosys' attributes kept; V55/V56:
+#                `python3 scripts/fmeda.py --netlist` re-derives every
+#                row from it and fails on drift), and diagnostic
 #                coverage from the fault-injection campaigns
 #                (verification_findings.md V9/V29/V30/V33/V37, and the
 #                V55 re-run on this RTL incl. the E2E sweep).
@@ -51,7 +52,8 @@ MBU_FRACTION = 0.02
 
 # ----------------------------------------------------------------- MEASURED
 SRAM_BITS   = 2 * 4096 * 39          # two TCMs, logical bits
-NETLIST = "build/gate/cdriscv_subsys_pd.v"   # `make fmax` (or `synth`) writes it
+NETLIST      = "build/gate/cdriscv_subsys_fmeda.v"  # attributes kept: `make fmeda`
+NETLIST_PLAIN = "build/gate/cdriscv_subsys_pd.v"   # what `make fmax` places
 TOTAL_FF_NETLIST = 5736               # sg13g2_dfrbpq_1 instances, E2E-inclusive (V55)
 TOTAL_FF    = TOTAL_FF_NETLIST        # was 5658 pre-E2E (V44)
 
@@ -59,8 +61,17 @@ TOTAL_FF    = TOTAL_FF_NETLIST        # was 5658 pre-E2E (V44)
 # Q-net is named after the RTL register it implements or, where the
 # register directly drives a wire of the subsystem, after that wire.
 # The rules follow the RTL instance tree of rtl/cdriscv_subsys.sv.
+# Two-stage attribution (V56).  Stage 1 matches the flip-flop's Q-net,
+# which in a flattened netlist carries the RTL instance path, against the
+# rules below.  Stage 2 covers the 536 flops whose net synthesis renamed
+# to `_NNNN_`: each one still carries yosys' `src` attribute -- the RTL
+# file and line of the register it implements -- and every OTHER flop
+# from that same source line has a name, so the line says which row it
+# belongs to.  519 of the 536 resolve that way; a line whose named flops
+# straddle two different rows (cfg_parity, instantiated in eight blocks)
+# and the handful with no src at all stay in the conservative row, which
+# is 17 flops rather than 536.
 ATTRIBUTION = [
-    ("unattributed (renamed)",   r"^_\d+_$"),
     ("core pair (lockstep)",     r"^g_lockstep\.u_core\.u_core_(main|check)\."),
     ("lockstep delay+compare",   r"^g_lockstep\."),
     ("TCM control+ECC logic",    r"^u_[id]tcm\."),
@@ -83,7 +94,7 @@ ATTRIBUTION = [
 # upsets that provably cannot violate the goal (masked/overwritten).
 ELEMENTS = [
     # name,                ffs,  safe, dc_seu, dc_mbu, dc_perm, mechanism
-    ("core pair (lockstep)", 3299, 0.45, 0.99,  0.99,  0.99,
+    ("core pair (lockstep)", 3363, 0.45, 0.99,  0.99,  0.99,
      "DCLS compares every output; V9/V37/V55 campaigns: 0 SDC; "
      "residual is the comparator itself and common-mode"),
     ("lockstep delay+compare", 556, 0.10, 0.90,  0.90,  0.90,
@@ -98,19 +109,19 @@ ELEMENTS = [
      "(block-e2e-link 12 024 checks, mutants 10/10).  The LINK WIRES "
      "they guard were swept (fi-e2e, V55): 400/400 wire-bit transients "
      "detected, 0 silent, 0 SDC, median 4 cycles"),
-    ("safety controller",      200, 0.05, 0.999, 0.90,  0.90,
+    ("safety controller",      307, 0.05, 0.999, 0.90,  0.90,
      "config parity (V37: 0 latent / 2600); sticky status is "
      "self-evidencing; residual: reaction wiring"),
-    ("watchdog",                 9, 0.05, 0.999, 0.90,  0.90,
+    ("watchdog",                 104, 0.05, 0.999, 0.90,  0.90,
      "config parity + timeout is self-revealing (a dead watchdog "
      "fires or never fires -- external pin protocol catches both)"),
-    ("clock monitor",          149, 0.10, 0.999, 0.90,  0.85,
+    ("clock monitor",          197, 0.10, 0.999, 0.90,  0.85,
      "config parity; ref-domain copies reload each heartbeat (V37)"),
     ("interrupt controller",    97, 0.20, 0.999, 0.90,  0.90,
      "config parity on ENABLE/MODE; pending is dynamic"),
-    ("timer",                   97, 0.30, 0.999, 0.90,  0.90,
+    ("timer",                   162, 0.30, 0.999, 0.90,  0.90,
      "config parity on MTIMECMP/CTRL; mtime dynamic"),
-    ("AMS interface",          365, 0.30, 0.999, 0.90,  0.85,
+    ("AMS interface",          505, 0.30, 0.999, 0.90,  0.85,
      "config parity incl. limits and mask (V37); results dynamic"),
     ("memory BIST (x2)",       146, 0.60, 0.50,  0.50,  0.70,
      "dormant in mission; faults surface at next BIST run -- "
@@ -120,10 +131,14 @@ ELEMENTS = [
      "trap, reset-sync faults are fail-stop, APB output upsets are "
      "read back by the software mitigation (V30) -- assigned, not "
      "swept"),
-    ("unattributed (renamed)",  536, 0.10, 0.90,  0.90,  0.90,
-     "flops whose Q-nets synthesis renamed (_NNN_): mostly the cores' "
-     "pipeline and CSR state by count; carried at a dc below every "
-     "named row's, deliberately"),
+    ("unresolved (conservative)", 17, 0.00, 0.50,  0.50,  0.50,
+     "the 17 flops of 5 736 (0.30 %) that the netlist cannot place in a "
+     "block: 8 from cfg_parity.sv, whose eight instances sit in eight "
+     "different blocks, and 9 that carry no src attribute at all.  "
+     "Carried with NO safe share and the lowest diagnostic coverage in "
+     "the table -- the figure an argued row gets when its argument is "
+     "discarded -- because 17 flops cannot move a metric and guessing "
+     "would be the only reason to do better"),
     ("registers: core RF",       0, 0.60, 0.99,  0.50,  0.99,
      "parity per word (in core-pair count; kept for the record)"),
 ]
@@ -135,39 +150,86 @@ SRAM = ("TCM arrays (SEC-DED)", SRAM_BITS, 0.40, 0.996, 0.996, 0.996,
 def fit_ff(n):    return n * SEU_FF_FIT_PER_MBIT / MBIT
 def fit_sram(n):  return n * SEU_SRAM_FIT_PER_MBIT / MBIT
 
-FF_CELL = "sg13g2_dfrbpq_1"      # the only sequential cell in the netlist
+FF_CELL    = "sg13g2_dfrbpq_1"   # the only sequential cell in the netlist
+UNRESOLVED = "unresolved (conservative)"
+DOMINANCE  = 0.90               # share of a src line's named flops that fixes its row
 
 
-def count_netlist(path):
-    """Re-derive the per-row flip-flop populations: every FF_CELL
-    instance's .Q net, bit index stripped, attributed by the first
-    matching ATTRIBUTION rule.  Returns (counts, total, unmatched)."""
-    import collections, re
-    rules = [(name, re.compile(pat)) for name, pat in ATTRIBUTION]
-    counts = collections.Counter()
-    unmatched, total, in_ff = [], 0, False
+def _parse_flops(path):
+    """[(src, q-net)] for every flip-flop in the netlist, in file order.
+    The `src` attribute is emitted on the line before the cell."""
+    import re
+    flops, pend, in_ff, cur = [], None, False, None
     with open(path) as f:
         for line in f:
-            if line.strip().startswith(FF_CELL + " "):
-                in_ff = True
-                total += 1
+            t = line.strip()
+            m = re.match(r'\(\* src = "(.*?)" \*\)', t)
+            if m:
+                pend = m.group(1)
+                continue
+            if t.startswith(FF_CELL + " "):
+                cur, in_ff, pend = pend, True, None
                 continue
             if in_ff and ".Q(" in line:
                 q = line.split(".Q(", 1)[1].rsplit(")", 1)[0].strip()
-                q = re.sub(r"\[\d+\]", "", q.lstrip("\\").strip())
-                for name, rx in rules:
-                    if rx.search(q):
-                        counts[name] += 1
-                        break
-                else:
-                    unmatched.append(q)
+                flops.append((cur, re.sub(r"\[\d+\]", "", q.lstrip("\\").strip())))
                 in_ff = False
-    return counts, total, unmatched
+                continue
+            if t.startswith("sg13g2") or t.startswith("RM_"):
+                pend = None
+    return flops
+
+
+def _row_of(q, rules):
+    for name, rx in rules:
+        if rx.search(q):
+            return name
+    return UNRESOLVED
+
+
+def count_netlist(path):
+    """Per-row flip-flop populations.  Stage 1: the Q-net's instance path.
+    Stage 2: for a net synthesis renamed to `_NNNN_`, the row its source
+    line's named siblings agree on.  Returns (counts, total, unresolved)."""
+    import collections, re
+    rules = [(name, re.compile(pat)) for name, pat in ATTRIBUTION]
+    renamed = re.compile(r"^_\d+_$")
+    flops = _parse_flops(path)
+
+    src_rows = collections.defaultdict(collections.Counter)
+    for src, q in flops:
+        if src and not renamed.match(q):
+            src_rows[src][_row_of(q, rules)] += 1
+
+    counts, unresolved = collections.Counter(), []
+    for src, q in flops:
+        if not renamed.match(q):
+            counts[_row_of(q, rules)] += 1
+            continue
+        # A source line's named flops may straddle rows when a register
+        # drives a port that flattening renamed into an enclosing module's
+        # wire -- safety_ctrl.sv:163 has 115 siblings in the safety
+        # controller and one that reads as lockstep wiring.  One row
+        # holding at least DOMINANCE of them is the register's row; a line
+        # genuinely shared between blocks (cfg_parity, instantiated in
+        # eight of them) is left in the conservative row rather than
+        # guessed at.
+        sib = src_rows.get(src)
+        if sib:
+            row, n = sib.most_common(1)[0]
+            if n >= DOMINANCE * sum(sib.values()):
+                counts[row] += 1
+                continue
+        counts[UNRESOLVED] += 1
+        unresolved.append((src, len(sib) if sib else 0))
+    return counts, len(flops), unresolved
 
 
 def check_netlist(path):
-    """Compare the table against a fresh recount of `path`."""
-    counts, total, unmatched = count_netlist(path)
+    """Compare the table against a fresh recount of `path`, and check that
+    the attributed netlist is the same netlist the flow places."""
+    import collections, os, re
+    counts, total, unresolved = count_netlist(path)
     ok = True
     print("recount of %s" % path)
     print("%-28s %8s %8s" % ("element", "table", "netlist"))
@@ -178,12 +240,23 @@ def check_netlist(path):
         ok = ok and not flag
         print("%-28s %8d %8d%s" % (name, ffs, counts[name], flag))
     print("%-28s %8d %8d" % ("TOTAL", TOTAL_FF_NETLIST, total))
-    if total != TOTAL_FF_NETLIST or unmatched or sum(counts.values()) != total:
+    if total != TOTAL_FF_NETLIST or sum(counts.values()) != total:
         ok = False
-    print("attributed %d + unattributed %d = %d (netlist %d): %s"
-          % (total - counts["unattributed (renamed)"],
-             counts["unattributed (renamed)"], sum(counts.values()), total,
-             "OK" if ok else "MISMATCH"))
+    # the placed netlist must hold exactly the same flops
+    if os.path.exists(NETLIST_PLAIN):
+        n = sum(1 for l in open(NETLIST_PLAIN) if l.strip().startswith(FF_CELL + " "))
+        same = (n == total)
+        ok = ok and same
+        print("placed netlist %s: %d %s%s"
+              % (NETLIST_PLAIN, n, FF_CELL, "" if same else "   <-- DIFFERENT NETLIST"))
+    by = collections.Counter(s.split(":")[0].split("/")[-1] if s else "<no src>"
+                             for s, _ in unresolved)
+    print("unresolved %d flop(s) (%.2f %% of %d): %s"
+          % (counts[UNRESOLVED], 100.0 * counts[UNRESOLVED] / max(total, 1), total,
+             ", ".join("%s x%d" % (k, v) for k, v in by.most_common()) or "none"))
+    print("attributed %d + unresolved %d = %d (netlist %d): %s"
+          % (total - counts[UNRESOLVED], counts[UNRESOLVED], sum(counts.values()),
+             total, "OK" if ok else "MISMATCH"))
     return ok
 
 
