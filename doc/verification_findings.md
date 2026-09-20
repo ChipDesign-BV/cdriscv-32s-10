@@ -68,6 +68,147 @@ removed the figure is LFM 82.9 %, against 86.0 % before: the
 attribution moves ~350 flops into the parity-protected rows, so V37's
 mechanism is worth *more* than the old table showed, not less.)
 
+
+### A 90 % harden on a die as wide as the SRAMs, and what stopped it seven times
+
+The brief was two numbers: the die width is the SRAM macro row with
+minimal margin, and the utilisation is 90 %. The width is
+arithmetic — 416.64 + 416.64 + 236.8 for the three macros of one TCM
+row, plus whatever the channels and margins have to be. The
+utilisation is not, and the reason is worth stating before the
+attempts: the six macros are **50.9 % of the core**, and no standard
+cell can live inside a macro band. At 90 % overall, the logic band
+must therefore carry 82-86 % local density, against **52 %** in the
+V52 signoff. Everything below is that number pushing back.
+
+Each attempt is a measurement, not an opinion, and each one failed
+differently:
+
+| # | die (µm) | reached | stopped by |
+|---|---|---|---|
+| 1 | 1130 × 2388 | PDN generation | `PDN-0179`: 4.8 µm slivers of standard-cell rows beside the macros that the grid cannot feed |
+| 2 | 1100 × 2472 | detailed placement | `DPL-0011` on the three I-TCM macros, flush against the core's bottom edge |
+| 3 | 1100 × 2472 | detailed placement | same — the halo I suspected turned out not to exist (below) |
+| 4 | 1100 × 2472 | post-CTS timing repair | `DPL-0036`: ten port buffers with no legal row within 100 µm |
+| 5 | 1100 × 2472 | global routing | congestion: 9 743 GCells of overflow |
+| 6 | 1160 × 2343 | global routing | congestion, **worse**: 29 327 |
+| 7 | 1100 × 2616 (85 %) | routing after diode insertion | congestion — though the routing *before* it was clean |
+
+**1. The power grid sets a minimum margin, or none at all.** A 15 µm
+core margin leaves 4.8 µm of rows beside the macros once the 10 µm
+macro halo is taken off — too narrow for the grid to feed, and too
+narrow to be worth feeding. The fix was not a wider margin but no
+margin: make the core *exactly* the macro row, so the only rows are in
+the logic band. That also improved the thing that actually binds,
+taking the logic band from 94 % local density to 81.5 %.
+
+**2. `PL_MACRO_HALO` has done nothing in this repository since V45.**
+It is not a LibreLane 3 variable; it resolved to `None` in every run,
+including the inherited `config.json`. The real names are
+`FP_MACRO_HORIZONTAL_HALO` and `FP_MACRO_VERTICAL_HALO`, both
+defaulting to 10 µm. Two attempts were spent on a halo theory that
+could not have been right, and the config has carried a dead key for a
+month. A setting that is silently ignored is worse than a wrong one.
+
+**3. Flush against the core's bottom edge, the macros fail detailed
+placement.** Reproduced standalone on the placed database: independent
+of orientation (`MX` or `R0`), independent of a one-row offset, and
+with **nothing** overlapping the three boxes — every instance in the
+design was checked. The D-TCM row, flush against the *top* edge,
+passes. Rather than keep guessing at an internal rule, the macro rows
+went back to the 30 µm vertical margin V52 ran through the whole flow.
+The width is untouched: all four channels the grid could not repair
+were in x.
+
+**4. A narrow die makes the legalizer's displacement limit binding.**
+`PL_MAX_DISPLACEMENT_Y` is 100 µm by default. With the macro row
+spanning the core width, a pin on the top or bottom edge has no legal
+row within 626.7 µm — the height of a macro row — so the port buffers
+the post-CTS resizer puts there cannot be legalized at all. Exactly
+ten failed, every one an `input<N>`/`output<N>`. V52 never met this
+because its 80 µm side margins left rows along the full height of both
+edges. Raising the limit to 800 µm costs no area.
+
+**5. The side channels I added to fix congestion made it worse.** With
+the core exactly the macro row, global routing overflowed 9 743
+GCells at 47.6 % average layer usage, the overflow overwhelmingly
+vertical. The obvious reading — the macros obstruct Metal1-Metal4 over
+their whole area, so with no side channel every net crossing a band is
+forced onto Metal5 and above — produced attempt 6: 30 µm of channel
+each side. Overflow **tripled** to 29 327 and wirelength rose 16 %.
+The channels cost height at constant area, the logic band went from
+83.6 % to 85.5 % local, and that outweighed everything the channels
+bought. Local density is the variable; the macro-crossing path is not.
+
+**6. The 46 700 diodes.** At 85 % the picture finally separated: global
+routing came out **completely clean — zero overflow on every layer,
+24 % usage, 3.62 mm of wire** — and the run then failed the global
+route that comes *after* diode insertion. `RUN_HEURISTIC_DIODE_INSERTION`
+pre-inserts a diode wherever a heuristic thinks an antenna violation
+might appear: **46 689 cells, 254 138 µm², a quarter of all
+standard-cell area and a third of all pins**, to pre-empt the **84 net
+and 92 pin** violations the checker actually found. Pin density, not
+utilisation, was what the router was choking on. It is an opt-in this
+repository turned on at V45; LibreLane's own default is off, and the
+detailed router repairs antennas iteratively
+(`DRT_ANTENNA_REPAIR_ITERS`), inserting a diode only where
+`check_antennas` reports one. Turned off, 90 % went from 9 743 GCells
+of overflow to 997, and with the router's capacity derate relaxed from
+0.3 to 0.2, to 664.
+
+**7. And 90 % still does not route.** 664 GCells is 0.13 % of demand,
+small enough that the global route is worth treating as advisory — the
+guide is not the router. So the flow was allowed past it and the
+detailed router asked to settle it. It could not: six optimisation
+iterations in, **41 137 DRC violations**, falling 2.5 % per iteration
+(45 004 → 43 868 → 42 347 → 41 137). A design that routes clears a few
+thousand in five to ten iterations. The run was killed rather than
+burn days on a certain failure.
+
+**The answer to "90 %" is therefore no, and the reason is not the
+width.** The six macros are 50.9 % of the core. No standard cell can
+sit inside a macro band, so 90 % overall forces the logic band to
+~82 % local density, against 52 % at V52. Every one of the nine builds
+above is a measurement of that; two of them (attempts 5 and 6) also
+measure the fact that *widening* the die makes it worse, because at
+constant area the extra width comes out of the height and the logic
+band gets denser.
+
+### What was built: 85 % on a die 1100.08 µm wide
+
+`flow/config_u85d.json`, run tag `u85d`, **completed with every
+signoff gate clean**:
+
+| | this build | V52 (2026-08-29) |
+|---|---|---|
+| die | **1100.08 × 2345.94 µm = 2.581 mm²** | 1330 × 2521 = 3.353 mm² |
+| core | 1080.08 × 2325.94 — **exactly the SRAM macro row** | 1310 × 2501 |
+| utilisation | **84.5 %** | 71.7 % |
+| instances / standard cells | 89 805 / 50 194 | 181 140 / 95 958 |
+| antenna cells | **164** (892 µm²) | 46 689 (254 138 µm²) |
+| route DRC | **0** | 0 |
+| KLayout DRC | **0** | 0 |
+| GDS XOR | **0** | 0 |
+| LVS | **matches, 0 errors, 0 unmatched devices or nets** | matches uniquely |
+| antenna violations | **0 nets, 0 pins** | 0 |
+| setup worst slack | **+10.05 ns** (slow) / +18.23 typ / +21.40 fast | +2.698 ns slow |
+| hold worst slack | **+0.169 ns** (fast) / +0.379 typ / +0.758 slow | +0.133 ns fast |
+| setup / hold TNS | 0 / 0, all three corners | 0 / 0 |
+
+The die is **23 % smaller** than the signed-off one and the timing is
+better, not worse: +10.05 ns of setup slack at the slow corner against
+V52's +2.698 ns on a 40 ns constraint. Both follow from the same
+cause — 91 000 fewer instances and a shorter average net. The antenna
+row is the sharpest illustration of what the heuristic was costing:
+**164 diodes where the pre-emptive pass inserted 46 689**, and the
+signoff antenna check is clean either way.
+
+Two settings are deliberately back at their defaults in this build,
+because nothing here should rest on them: `GRT_ADJUSTMENT` is 0.3 and
+`GRT_ALLOW_CONGESTION` is off. The only flow change that stands is
+`RUN_HEURISTIC_DIODE_INSERTION: false`, and the antenna result above
+is what justifies it.
+
 ## Phase V55 — the objective suite re-run on the E2E-inclusive RTL (2026-09-14)
 
 V54 added E2E always-on and said plainly that every objective number

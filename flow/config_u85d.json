@@ -1,0 +1,158 @@
+{
+  "DESIGN_NAME": "cdriscv_subsys_hard",
+  "PDK": "ihp-sg13g2",
+  "VERILOG_FILES": [
+    "dir::../rtl/core/cdriscv_pkg.sv",
+    "dir::../rtl/common/cdriscv_sync.sv",
+    "dir::../rtl/common/cdriscv_cfg_parity.sv",
+    "dir::../rtl/common/cdriscv_counter64.sv",
+    "dir::../rtl/core/cdriscv_alu.sv",
+    "dir::../rtl/core/cdriscv_decoder.sv",
+    "dir::../rtl/core/cdriscv_regfile.sv",
+    "dir::../rtl/core/cdriscv_multdiv.sv",
+    "dir::../rtl/core/cdriscv_lsu.sv",
+    "dir::../rtl/core/cdriscv_csr.sv",
+    "dir::../rtl/core/cdriscv_if_stage.sv",
+    "dir::../rtl/core/cdriscv_core.sv",
+    "dir::../rtl/safety/cdriscv_ecc_secded.sv",
+    "dir::../rtl/safety/cdriscv_lockstep.sv",
+    "dir::../rtl/safety/cdriscv_safety_ctrl.sv",
+    "dir::../rtl/safety/cdriscv_wdog.sv",
+    "dir::../rtl/safety/cdriscv_clkmon.sv",
+    "dir::../rtl/safety/cdriscv_mbist.sv",
+    "dir::../rtl/safety/cdriscv_e2e.sv",
+    "dir::../rtl/safety/cdriscv_e2e_link.sv",
+    "dir::../verif/gate/cdriscv_tcm_macro.sv",
+    "dir::../rtl/bus/cdriscv_bus.sv",
+    "dir::../rtl/bus/cdriscv_apb_bridge.sv",
+    "dir::../rtl/periph/cdriscv_timer.sv",
+    "dir::../rtl/periph/cdriscv_irq_ctrl.sv",
+    "dir::../rtl/periph/cdriscv_ams_if.sv",
+    "dir::../rtl/boot/cdriscv_qspi_boot.sv",
+    "dir::../rtl/cdriscv_subsys.sv",
+    "dir::cdriscv_subsys_hard.sv"
+  ],
+  "CLOCK_PORT": "clk_i",
+  "CLOCK_NET": "clk_i",
+  "CLOCK_PERIOD": 40,
+  "PL_TARGET_DENSITY_PCT": 76,
+  "MACROS": {
+    "RM_IHPSG13_1P_2048x32_c2_bm_bist": {
+      "gds": [
+        "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/gds/RM_IHPSG13_1P_2048x32_c2_bm_bist.gds"
+      ],
+      "lef": [
+        "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/lef/RM_IHPSG13_1P_2048x32_c2_bm_bist.lef"
+      ],
+      "lib": {
+        "*": [
+          "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/lib/RM_IHPSG13_1P_2048x32_c2_bm_bist_typ_1p20V_25C.lib"
+        ]
+      },
+      "instances": {
+        "u_sub.u_itcm.g_bank[0].u_bank": {
+          "location": [
+            10.0,
+            40.0
+          ],
+          "orientation": "FS"
+        },
+        "u_sub.u_itcm.g_bank[1].u_bank": {
+          "location": [
+            431.64,
+            40.0
+          ],
+          "orientation": "FS"
+        },
+        "u_sub.u_dtcm.g_bank[0].u_bank": {
+          "location": [
+            10.0,
+            1679.24
+          ],
+          "orientation": "N"
+        },
+        "u_sub.u_dtcm.g_bank[1].u_bank": {
+          "location": [
+            431.64,
+            1679.24
+          ],
+          "orientation": "N"
+        }
+      }
+    },
+    "RM_IHPSG13_1P_4096x8_c3_bm_bist": {
+      "gds": [
+        "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/gds/RM_IHPSG13_1P_4096x8_c3_bm_bist.gds"
+      ],
+      "lef": [
+        "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/lef/RM_IHPSG13_1P_4096x8_c3_bm_bist.lef"
+      ],
+      "lib": {
+        "*": [
+          "/foss/pdks/ihp-sg13g2/libs.ref/sg13g2_sram/lib/RM_IHPSG13_1P_4096x8_c3_bm_bist_typ_1p20V_25C.lib"
+        ]
+      },
+      "instances": {
+        "u_sub.u_itcm.u_par": {
+          "location": [
+            853.28,
+            40.0
+          ],
+          "orientation": "FS"
+        },
+        "u_sub.u_dtcm.u_par": {
+          "location": [
+            853.28,
+            1687.64
+          ],
+          "orientation": "N"
+        }
+      }
+    }
+  },
+  "FP_PDN_MACRO_HOOKS": [
+    ".*u_bank.* VDD VSS VDD! VSS!",
+    ".*u_bank.* VDD VSS VDDARRAY! VSS!",
+    ".*u_par.* VDD VSS VDD! VSS!",
+    ".*u_par.* VDD VSS VDDARRAY! VSS!"
+  ],
+  "RUN_HEURISTIC_DIODE_INSERTION": false,
+  "GRT_ALLOW_CONGESTION": false,
+  "USE_SLANG": true,
+  "FP_SIZING": "absolute",
+  "DIE_AREA": [
+    0,
+    0,
+    1100.08,
+    2345.94
+  ],
+  "CORE_AREA": [
+    10.0,
+    10.0,
+    1090.08,
+    2335.94
+  ],
+  "FP_PDN_ENABLE_MACROS_GRID": true,
+  "RUN_MAGIC_DRC": false,
+  "RUN_KLAYOUT_DRC": true,
+  "KLAYOUT_DRC_THREADS": 8,
+  "LVS_IGNORE_CELLS": [
+    "RM_IHPSG13_1P_2048x32_c2_bm_bist",
+    "RM_IHPSG13_1P_4096x8_c3_bm_bist"
+  ],
+  "RUN_POST_GRT_RESIZER_TIMING": true,
+  "PL_RESIZER_HOLD_SLACK_MARGIN": 0.15,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.15,
+  "GRT_RESIZER_HOLD_MAX_BUFFER_PCT": 75,
+  "GRT_RESIZER_FIX_HOLD_FIRST": true,
+  "//": "cdriscv-32s-10 -- RTL2GDS on a die whose WIDTH is the SRAM macro row with minimal margin: the core IS the row, 1080.08 um, plus the 10 um die margin (V56).  Utilisation 85 %.  90 % was asked for and was measured to be unroutable on this width -- nine builds, ending in a detailed route that sat at 41 137 DRC violations and was shedding 2.5 % per iteration.  The router's own margins are back at their defaults here (GRT_ADJUSTMENT 0.3, no allow-congestion): nothing about this build depends on relaxing them.  RUN_HEURISTIC_DIODE_INSERTION stays off -- it pre-inserts ~46 700 diodes, a quarter of the standard-cell area and a third of the pins, to pre-empt 92 antenna violations the checker actually found, and it is what broke the 85 % build that routed clean without it; the detailed router repairs the real ones (DRT_ANTENNA_REPAIR_ITERS).",
+  "//halo": "FP_MACRO_HORIZONTAL_HALO / FP_MACRO_VERTICAL_HALO are the LibreLane 3 names (both default 10 um); the inherited PL_MACRO_HALO silently resolved to None and never did anything.  They are left at their defaults.",
+  "//y": "The macro rows sit 30 um in from the core's top and bottom edges, as V52's did. Flush against those edges the detailed placer rejected the three bottom macros (DPL-0011 padding check, reproduced standalone on the placed database and independent of orientation, of a one-row offset and of any overlap -- nothing intersects those boxes).  The width is unaffected: the four channels the PDN could not repair in the first attempt were all in x, so the macro row still spans the core width exactly.",
+  "PL_MAX_DISPLACEMENT_X": 1000,
+  "PL_MAX_DISPLACEMENT_Y": 800,
+  "//displacement": "The detailed placer may move an instance 800 um vertically, against a default of 100.  With the macro row spanning the core width, a pin on the top or bottom edge has NO legal row within 626.7 um -- the height of a macro row -- so the port buffers the post-CTS resizer puts there cannot be legalized at all: [DPL-0036] on exactly ten of them, every one an input<N>/output<N> port buffer.  V52 never hit this because its 80 um side margins left rows along the full height of both edges.  The limit is the cost of the narrow die, and raising it costs no area.",
+  "//width": "The die width is the SRAM macro row plus the narrowest side channel that ROUTES: 30 um of core margin each side (20 um of standard-cell rows once the 10 um macro halo is taken off), plus the 10 um die margin.  With the core exactly equal to the macro row the flow got as far as global routing and overflowed -- 9 743 GCells at only 47.6 % average layer usage, the overflow overwhelmingly VERTICAL (Metal4 max-V 22).  The macros obstruct Metal1-Metal4 over their whole area, so with no side channel every net crossing a macro band has to funnel onto Metal5 and above.  The channel gives Metal1-4 a way past the macros, which is what the 80 um margins of V52 were doing all along.",
+  "GRT_ADJUSTMENT": 0.3,
+  "//grt": "GRT_ADJUSTMENT 0.2 against the flow default 0.3.  The default derates every layer's track capacity by 30 % as a margin for pin and via blockage; with it, the 90 % build overflowed by 997 GCells out of 549 824 of demand -- 0.18 % -- on Metal2/Metal3 at a modelled 68-72 % usage, i.e. about half of physical capacity.  0.2 gives the router the headroom that is actually there.  The claim is only worth what detailed routing says about it: route DRC is a hard gate in this flow and the run stands or falls on it.",
+  "//congestion": "GRT_ALLOW_CONGESTION lets the flow proceed past a global route that still shows 664 GCells of overflow -- 0.13 % of 529 069 of demand, after the diodes and the derate took it down from 9 743.  This is not a way of declaring the design routable: the global route is a guide, the detailed router is what has to honour spacing, and route DRC is a hard gate in this flow.  If TritonRoute closes those cells the design routes; if it reports violations, 90 % does not fit on this width and the answer is the 85 % build."
+}

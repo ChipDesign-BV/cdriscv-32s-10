@@ -305,10 +305,10 @@ code word in a 64-bit row wastes 25 bits of every row (39 %), while
 macro is 4096 deep so it needs no bank select — and no `2048x8` part,
 which the PDK does not offer.
 
-The signed-off run uses a **1330 × 2521 µm die** (3.353 mm²) at 58.7 %
-placement utilisation, 71.7 % once the antenna diodes are placed. Budget
-the macros as fixed at **1.34 mm²** for 32 KiB of ECC-protected TCM —
-40 % of that die.
+The signed-off run uses a **1100.08 × 2345.94 µm die** (2.581 mm²) at
+**84.5 % utilisation** (V56, on the E2E-inclusive RTL; the earlier V52
+die was 1330 × 2521 µm at 71.7 %). Budget the macros as fixed at
+**1.34 mm²** for 32 KiB of ECC-protected TCM — 52 % of that die.
 
 **Shape the die around the macro row.** The six macros want two rows the
 full width of the die, so the die should be one macro row wide and two
@@ -344,11 +344,21 @@ beside the pin it protects, so what binds is *local* free sites. A
 design can be entirely uncongested and still have nowhere to put a
 diode.
 
-The floor is now bracketed tightly: **3.312 mm² fails and 3.353 mm²
-signs off** — 1.2 % apart in area, 0.008 apart in utilisation. Treat it
-as a cliff, not a gradient: the flow either finds sites for ~46 700
-diodes or it does not, and a clean congestion report says nothing about
-which.
+That floor was a flow setting, not a property of the design, and V56
+moved it. `RUN_HEURISTIC_DIODE_INSERTION` pre-inserts a diode wherever
+a heuristic suspects an antenna violation — ~46 700 of them, a quarter
+of the standard-cell area — against the **84 nets and 92 pins** the
+checker actually finds. With it off the detailed router repairs the
+real ones (**164 diodes**, zero antenna violations at signoff) and the
+die signs off at **2.581 mm², 23 % smaller**, with better timing. What
+remains true is the shape of the advice above: budget for the macro
+row, and do not read a clean congestion report as proof that
+everything will fit.
+
+**90 % utilisation does not route here.** The macros are ~51 % of the
+core and cannot host cells, so 90 % overall drives the logic band to
+~82 % local density; nine builds measure it, the last one stuck at
+41 137 DRC violations in detailed routing. 85 % is the shipped point.
 
 **Frequency is not the lever.** A run at half the clock period changed
 standard-cell area by 0.1 %. The clock is not what consumes the area on

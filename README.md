@@ -137,10 +137,11 @@ cd flow && librelane --manual-pdk --pdk-root $PDK_ROOT config.json
 ```
 
 **State: DRC clean, LVS matches, setup and hold both met at all three
-corners** — at **25 MHz on a 1330 x 2521 um rectangular die (3.353 mm²,
-V52)** — the main configuration, and the one to design against. A
-1.90 mm square (3.610 mm²) is also closed and is kept as the more
-conservative alternative. The flow runs floorplan -> PDN -> placement ->
+corners** — at **25 MHz on a 1100 x 2346 um die (2.581 mm², V56, on the
+E2E-inclusive RTL)**, whose width is the SRAM macro row and nothing
+else. That is the main configuration and the one to design against.
+The V52 die (1330 × 2521 µm, 3.353 mm², pre-E2E) and the 1.90 mm square
+(3.610 mm²) are kept as the earlier, more conservative points. The flow runs floorplan -> PDN -> placement ->
 CTS -> detailed routing -> extraction -> IR-drop -> streamout -> DRC ->
 LVS.
 
@@ -167,25 +168,42 @@ rectangle with two contiguous bands. Utilization goes 0.445 -> 0.587.
 | Antenna, post-route | **0 nets, 0 pins** |
 | **DRC** (IHP KLayout signoff deck) | **clean** |
 | GDS XOR (Magic vs KLayout streamouts) | **0 differences** |
-| **LVS** (netgen) | **circuits match uniquely** — 95 962 devices, 49 499 nets |
+| **LVS** (netgen) | **circuits match** — 0 errors, 0 unmatched devices or nets (V56); V52: matched uniquely, 95 962 devices / 49 499 nets |
 | Setup, 3 corners | slow **+2.698 ns**, typ +13.70, fast +20.05; TNS 0 |
 | **Hold**, 3 corners | **closed** — fast **+0.133 ns**, typ +0.348, slow +0.704; TNS 0 |
 | TCM split-macro mapping | **verified functionally** — 6 600-check equivalence vs the behavioural TCM, mutation-proved (V49); `make block-tcm` |
-| Max slew / max cap | **not gated by the flow** — 791 slew pins (slow, up from 527) and 64 cap pins; see V46/V48 |
+| Max slew / max cap | **not gated by the flow** — see V46/V48; unchanged as a caveat |
 
-**Area (V48, V52).** The die is **1330 × 2521 µm (3.353 mm²)** at
-**58.7 % placement utilization**, 71.7 % once the antenna diodes are in.
-Three changes got there from the original 2.40 mm square: the TCM check
-bits moved into their own `4096x8` macros so no array bit is wasted
-(macro area 1.967 → 1.337 mm², −32 %), the die shrank around them
-(2.40 mm → 1.90 mm square), and then the square became a rectangle one
-macro row wide (3.61 → 3.353 mm², −7.1 %).
+**Area (V56).** The die is **1100.08 × 2345.94 µm (2.581 mm²)** at
+**84.5 % utilisation**, and its width is the SRAM macro row exactly:
+416.64 + 5 + 416.64 + 5 + 236.8 = 1080.08 µm of core, plus a 10 µm die
+margin. Four changes got there from the original 2.40 mm square: the
+TCM check bits moved into their own `4096x8` macros so no array bit is
+wasted (macro area 1.967 → 1.337 mm², −32 %), the die shrank around
+them (2.40 → 1.90 mm square), the square became a rectangle one macro
+row wide (3.61 → 3.353 mm²), and then **the pre-emptive antenna diodes
+went away** (3.353 → 2.581 mm², −23 %).
 
-The floor is bracketed to **1.2 %**: 3.312 mm² fails and 3.353 mm² signs
-off. It is set by antenna-diode legalisation — not routing congestion,
-which sits at 19 % usage with zero overflow — because ~46 700 diodes each
-need a free site beside the pin they protect. Treat it as a cliff: a
-clean congestion report says nothing about whether the diodes will fit.
+That last one corrects what this section used to claim. The floor was
+bracketed at 3.353 mm² and attributed to antenna-diode legalisation —
+"~46 700 diodes each need a free site beside the pin they protect" —
+which was true of the flow and not of the design.
+`RUN_HEURISTIC_DIODE_INSERTION` pre-inserts those diodes to pre-empt
+violations; the checker found **84 nets and 92 pins** actually
+violating. With the pre-emption off, the detailed router repairs the
+real ones and the signed-off die carries **164 diodes instead of
+46 689**, with **zero** antenna violations either way. The area floor
+was a flow setting.
+
+**90 % utilisation was asked for and does not route**, on this width or
+a wider one: the six macros are 50.9 % of the core and no standard cell
+can sit inside a macro band, so 90 % forces the logic band to ~82 %
+local density against 52 % at V52. Nine builds measure it, ending in a
+detailed route stuck at 41 137 DRC violations and shedding 2.5 % per
+iteration. Finding V56 has the ladder — each build failed somewhere
+different, and two of them show that *widening* the die makes
+congestion worse, not better, because at constant area the width comes
+out of the height.
 
 **This is not a tapeout.** No clock-tree review, signal integrity, ESD,
 packaging or test structures; the FMEDA still runs on assumed failure
@@ -193,13 +211,13 @@ rates. What it is: evidence that the RTL hardens, that the layout
 matches the netlist that was verified, and that the timing claim
 survives the corner that matters.
 
-| | Main configuration |
-|---|---|
-| Die | 1330 × 2521 µm (**3.353 mm²**) — 39.9 % SRAM macros, 17.4 % standard cells, 7.6 % antenna diodes, the rest fill and routing. Placement utilisation 58.7 %, 71.7 % with the diodes placed |
-| Content | 95 958 standard cells (of which **12 666 are timing-repair buffers** and **46 689 are antenna diodes**), **6 SRAM macros**, 85 176 fill |
-| Memories | per TCM: `RM_IHPSG13_1P_2048x32` × 2 (data) + `RM_IHPSG13_1P_4096x8` × 1 (check bits); banded, 10 µm halos |
-| Clock | **40 ns (25 MHz)** |
-| IR drop | worst-case 1.20 V — negligible |
+| | Main configuration (V56) | previous (V52, pre-E2E) |
+|---|---|---|
+| Die | **1100.08 × 2345.94 µm (2.581 mm²)** — the width IS the SRAM macro row; 51.8 % macros, 30.3 % standard cells, the rest fill and routing. **Utilisation 84.5 %** | 1330 × 2521 µm (3.353 mm²), 71.7 % |
+| Content | **50 194 standard cells** (12 961 timing-repair buffers, **164 antenna diodes**), **6 SRAM macros**, 39 605 fill | 95 958 cells, 46 689 diodes, 85 176 fill |
+| Memories | per TCM: `RM_IHPSG13_1P_2048x32` × 2 (data) + `RM_IHPSG13_1P_4096x8` × 1 (check bits); banded, 10 µm halos | same |
+| Clock | **40 ns (25 MHz)** | same |
+| IR drop | worst-case 1.20 V — negligible | same |
 
 **A correction worth keeping.** An early run met its constraint at the
 typical corner while missing **by 8.99 ns at slow** (1.08 V, 125 °C),
@@ -261,7 +279,7 @@ V0–V55, newest first). Summary, one line per area:
 | Formal | **6 benches pass** | re-run on the E2E RTL (V55): full proofs for SEC-DED (all 2³² words, every 1–2-bit error) and decoder (all 2³² encodings); BMC elsewhere; ungated config-parity contract proven; mutation tested |
 | Coverage | **O6/O7 met** | 95.9 % line (100 % with 16 [reviewed waivers](verif/coverage_waivers.md)), 96.2 % toggle, 100 % functional over 66 cover points, on the E2E RTL with the loader's boot benches in the merge (V55; toggle had read 93.9 % and was recovered by stimulus, not waivers) |
 | Fault injection | **0 SDC, 0 hangs, 0 latent** | 10 400 classified upsets over four workloads on the E2E RTL (V55) plus the 400-upset E2E link sweep, **400 of 400 detected**; latent was **46.4 %** before the V37 configuration parity, zero after, detection median 2–4 cycles; `make fi` (incl. `fi-e2e`) |
-| Timing | **closed at 25 MHz, 3 corners — pre-E2E GDS** | setup **+2.698 ns** (slow), hold **+0.133 ns** (fast), TNS 0, LVS matches uniquely (V52, before E2E); the E2E netlist's placement estimate is reg2reg **+13.9 ns** at 40 ns (`make fmax`, V55 — the target was broken from V49 to V55, see the findings); the re-harden is deferred |
+| Timing | **closed at 25 MHz, 3 corners, on the E2E RTL** | setup **+10.05 ns** (slow) / +18.23 typ / +21.40 fast, hold **+0.169 ns** (fast) / +0.379 typ / +0.758 slow, TNS 0 both — the V56 harden, 1100 × 2346 µm at 84.5 % utilisation, DRC and LVS clean (V52's pre-E2E numbers were +2.698 / +0.133 on a 23 % bigger die) |
 | Gate level | **O8 met, on the E2E netlist** | zero-delay netlist all pass (blocks, 5 FSM recoveries, subsystem programs); smoke + 12 architectural tests on the placed E2E netlist with OpenROAD SDF cell delays at the 40 ns signoff clock, signatures bit-exact vs Spike (V55; V42/V43 were pre-E2E); `make gate gate-sdf gate-arch` — the SDF path had four stale pre-split traces, all found and fixed in V55 |
 | FMEDA | **SPFM 99.57 % / LFM 91.14 %, 1.02 FIT** | recomputed from the E2E netlist (5 736 flops, `scripts/fmeda.py --netlist` asserts the count), E2E row measured by the sweep, under stated assumed failure rates (V55/V56). **No row rests on an assigned attribution**: the 536 synthesis-renamed flops are attributed to their blocks from yosys' `src`, leaving 17 (0.30 %) whose worst case — dc 0.00 — still gives LFM 90.79 %, above ASIL D ([doc/fmeda.md](doc/fmeda.md) §2a) |
 | CI | **green** | [verify.yml](.github/workflows/verify.yml): full gate on every push; gate-level, `sta`, `fmax`, SDF smoke and fault injection (incl. the E2E sweep) nightly |
