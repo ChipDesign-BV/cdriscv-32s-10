@@ -169,10 +169,10 @@ rectangle with two contiguous bands. Utilization goes 0.445 -> 0.587.
 | **DRC** (IHP KLayout signoff deck) | **clean** |
 | GDS XOR (Magic vs KLayout streamouts) | **0 differences** |
 | **LVS** (netgen) | **circuits match** — 0 errors, 0 unmatched devices or nets (V56); V52: matched uniquely, 95 962 devices / 49 499 nets |
-| Setup, 3 corners | slow **+2.698 ns**, typ +13.70, fast +20.05; TNS 0 |
-| **Hold**, 3 corners | **closed** — fast **+0.133 ns**, typ +0.348, slow +0.704; TNS 0 |
+| Setup, 3 corners | slow **+10.05 ns**, typ +18.23, fast +21.40; TNS 0 (V56; V52: +2.698 / +13.70 / +20.05) |
+| **Hold**, 3 corners | **closed** — fast **+0.169 ns**, typ +0.379, slow +0.758; TNS 0 (V56; V52: +0.133 / +0.348 / +0.704) |
 | TCM split-macro mapping | **verified functionally** — 6 600-check equivalence vs the behavioural TCM, mutation-proved (V49); `make block-tcm` |
-| Max slew / max cap | **not gated by the flow** — see V46/V48; unchanged as a caveat |
+| Max slew / max cap / max fanout | **open — not gated by the flow, and not clean.** V56 build, slow corner: **76** max-slew pins (53 of them SRAM macro inputs, worst 1.84 ns against a 0.476 ns limit on `A_MEN`), **43** max-cap pins (all SRAM `A_DOUT`, worst 0.107 pF against 0.064 pF), 432 max-fanout. Down from 791 / 64 at V48, not zero; the SRAM read-path delay is being extrapolated past its Liberty table. Fix is buffering at the TCM pins (V46) — not done |
 
 **Area (V56).** The die is **1100.08 × 2345.94 µm (2.581 mm²)** at
 **84.5 % utilisation**, and its width is the SRAM macro row exactly:

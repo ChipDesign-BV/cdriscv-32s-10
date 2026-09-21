@@ -203,6 +203,26 @@ row is the sharpest illustration of what the heuristic was costing:
 **164 diodes where the pre-emptive pass inserted 46 689**, and the
 signoff antenna check is clean either way.
 
+**What "every signoff gate clean" does not cover (added 2026-09-21).**
+The gates above are the ones the flow enforces. It does not enforce
+max-slew, max-capacitance or max-fanout (V46), and this build is not
+clean on them — `56-openroad-stapostpnr/*/checks.rpt`:
+
+| corner | max-slew pins | of which SRAM pins | max-cap pins | max-fanout |
+|---|---|---|---|---|
+| slow 1.08 V / 125 °C | 76 | 53 | 43 (all SRAM `A_DOUT`) | 432 |
+| typ | 40 | 40 | 43 | 432 |
+| fast | 10 | 10 | 44 | 432 |
+
+Worst slew 1.84 ns against a 0.476 ns limit (`u_dtcm…u_bank/A_MEN`);
+worst load 0.107 pF against 0.064 pF (`A_DOUT[1]`). That is far better
+than V48 (791 / 64) — fewer instances, shorter nets — and it is the
+same open item: the SRAM read path is timed by extrapolating past the
+Liberty table, so the +10.05 ns of setup slack has an unquantified
+error on the TCM read paths. The first report of this build said
+"every signoff gate clean" without this paragraph; it should not have.
+The fix is unchanged since V46: buffer at the TCM pins, re-run.
+
 Two settings are deliberately back at their defaults in this build,
 because nothing here should rest on them: `GRT_ADJUSTMENT` is 0.3 and
 `GRT_ALLOW_CONGESTION` is off. The only flow change that stands is
