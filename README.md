@@ -53,7 +53,10 @@ things.
 > current RTL.** The FMEDA ([doc/fmeda.md](doc/fmeda.md), recomputed
 > from the E2E netlist, every flop but 17 attributed to its block):
 > SPFM 99.57 %, LFM 91.14 %, residual 1.02 FIT
-> — **under assumed failure rates**, clearly labeled,
+> — **under assumed failure rates**, clearly labeled, and with LFM's
+> margin over 90 % resting on the *argued* coverage of three small rows
+> that no fault injection reaches (any one of them at 0.50 gives
+> 89.8–90.0 %; [doc/fmeda.md §5a](doc/fmeda.md)) — figures
 > that a real safety case must replace with foundry data. An
 > architectural statement, not a certification: no ISO 26262 or
 > IEC 61508 compliance of any kind is claimed, and the remaining work

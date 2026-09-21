@@ -69,6 +69,21 @@ attribution moves ~350 flops into the parity-protected rows, so V37's
 mechanism is worth *more* than the old table showed, not less.)
 
 
+### What that closure did not close (added 2026-09-21)
+
+The test that condemned the unattributed row — set the unmeasured
+figure to 0.50 and see whether a threshold moves — was applied to that
+row only. Applied to every row, three more fail it: TCM control+ECC
+logic (LFM 89.94 %), the E2E endpoint registers (89.76 %) and the
+bus/sync/APB glue (89.96 %); none of the three has a fault-injection
+target inside it, and together with the BIST row they give 86.97 %.
+SPFM does not move (≥ 99.48 %). Found by generalising `fmeda.py` into a
+tool that runs the test on every non-measured row automatically, which
+is the form the check should have had from the start: **a sensitivity
+analysis run on the row you already suspect is a confirmation, not an
+analysis.** Status: open; the fix is a directed sweep into those 282
+flops, as variant 2 did for its loader. `doc/fmeda.md` §5a.
+
 ### A 90 % harden on a die as wide as the SRAMs, and what stopped it seven times
 
 The brief was two numbers: the die width is the SRAM macro row with

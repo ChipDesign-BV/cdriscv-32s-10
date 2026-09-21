@@ -155,6 +155,39 @@ whose dc of 0.90, set at 0.50, put LFM below ASIL D — was resolved in
 V56 (section 2a), and what is left of it is 17 flops whose worst case
 is already inside the headline figure.
 
+## 5a. The same test, applied to every row (added 2026-09-21)
+
+Section 2a closed the unattributed row by the argument that a verdict
+must not rest on a figure nobody measured, tested by setting that
+figure to 0.50. Applying the identical test to every other row — done
+mechanically while generalising this script — shows the closure was
+narrower than this document claimed:
+
+| row set to DC 0.50 (safe share kept) | fault injection into the row? | LFM |
+|---|---|---|
+| TCM control+ECC logic (91 flops) | no — the *arrays* are targets 6/7, the control logic is not | **89.94 %** |
+| E2E link endpoints (91 flops) | no — the link *wires* are swept (fi-e2e), the endpoint registers are argued | **89.76 %** |
+| bus + sync + APB glue (100 flops) | no ("assigned, not swept") | **89.96 %** |
+| memory BIST ×2 (146 flops) | no | 90.74 % |
+| unresolved (17 flops) | — | 91.14 % |
+| all five together | | **86.97 %** |
+
+Rows with at least one register among the 27 random-campaign targets
+(core pair, lockstep delay pipeline 86/86 detected, safety controller,
+watchdog, clock monitor, interrupt controller, timer, AMS) are not in
+this table; their figures are supported by a sample of their registers,
+which is weaker than "measured" and is what it is.
+
+So three rows, 282 flops, each carry an **argued** diagnostic coverage
+(0.90–0.95) that holds LFM above 90 % by less than its own uncertainty.
+"No row now rests on an assigned attribution" (section 5) is true of
+*attribution* and was read — by this document's author too — as true of
+the *verdict*. It is not. The honest status: **SPFM is robust (≥ 99.48 %
+in every case above); LFM is past ASIL D only if the three argued rows'
+coverage is accepted.** The way to close it is the one variant 2 used
+for its loader row: a directed sweep into those registers
+(`fi_campaign.py --sweep` with new targets). Not done.
+
 ## 6. Handoff checklist for the safety-case owner
 
 1. Replace the ASSUMED block in `scripts/fmeda.py` with foundry FIT
